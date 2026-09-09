@@ -350,7 +350,7 @@ function buildIsland() {
         const d = Math.hypot(px - lake.x, pz - lake.z);
         if (d < lake.radius) {
           const dip = 1 - d / lake.radius;
-          py -= dip * dip * 0.3;
+          py -= dip * dip * 0.6;
           if (d < lake.radius * 0.82) inLake = true;
         }
       }
@@ -381,10 +381,19 @@ function buildIsland() {
 
   for (let li = 0; li < LAKES.length; li++) {
     const lake = LAKES[li];
-    // Sit clearly above the carved lakebed (not just 0.1 below the raw
-    // terrain sample) so the water reads as a surface floating over a
-    // basin, with real clearance instead of nearly touching the floor.
-    const y = raycastHeight(mesh, lake.x, lake.z) + 0.05;
+    // Sampling straight down at the lake's own center returns the
+    // DEEPEST carved point (full dip applied there), so the water ended
+    // up sitting almost flush against the basin floor — no visible depth.
+    // Sample the natural (undipped) rim instead — at d=radius the dip
+    // falls to exactly 0 — and use that as the waterline, so however deep
+    // the center is carved, the surface stays up at the shore's height.
+    let rimSum = 0;
+    const rimSamples = 6;
+    for (let ri = 0; ri < rimSamples; ri++) {
+      const a = (ri / rimSamples) * Math.PI * 2;
+      rimSum += raycastHeight(mesh, lake.x + Math.cos(a) * lake.radius * 0.99, lake.z + Math.sin(a) * lake.radius * 0.99);
+    }
+    const y = rimSum / rimSamples + 0.02;
     lake.waterY = y;
 
     // Jittered-radius fan instead of a perfect circle, so the shoreline
@@ -392,11 +401,11 @@ function buildIsland() {
     // keeps the wobble stable across rebuilds.
     const jitterSeed = li * 91.7 + 12.3;
     const segs = 28;
-    // Bright, clearly-blue palette with real contrast against the sandy
-    // lakebed showing through — the previous dark-navy tones were nearly
-    // indistinguishable from the terrain's own carved-bowl shading.
-    const deep = new THREE.Color(0x1c7fa8);
-    const shallow = new THREE.Color(0x7fe0f2);
+    // Bright, saturated blue with real contrast against the sandy lakebed
+    // showing through — deep water stays a strong blue rather than the
+    // near-black of the first pass or a washed-out pale cyan.
+    const deep = new THREE.Color(0x0f5f8f);
+    const shallow = new THREE.Color(0x3fb2d9);
     const positions = [0, y, 0];
     const colors = [deep.r, deep.g, deep.b];
     for (let i = 0; i <= segs; i++) {
@@ -414,9 +423,9 @@ function buildIsland() {
     waterGeo.setIndex(idx);
     waterGeo.computeVertexNormals();
     const waterMat = new THREE.MeshPhysicalMaterial({
-      vertexColors: true, transparent: true, opacity: 0.8,
+      vertexColors: true, transparent: true, opacity: 0.93,
       roughness: 0.1, metalness: 0.0, clearcoat: 0.8, clearcoatRoughness: 0.15,
-      emissive: 0x0a3a52, emissiveIntensity: 0.25,
+      emissive: 0x0a3a52, emissiveIntensity: 0.3,
     });
     const surface = new THREE.Mesh(waterGeo, waterMat);
     surface.position.set(lake.x, 0, lake.z);
