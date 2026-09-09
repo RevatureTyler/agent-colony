@@ -26,15 +26,16 @@ const apLaunch = document.getElementById('apLaunch');
 const apRemove = document.getElementById('apRemove');
 const apCancel = document.getElementById('apCancel');
 
-const ISLAND_RADIUS = 6;
+const ISLAND_RADIUS = 9;
 const LAKES = [
-  { x: 2.3, z: -1.6, radius: 1.05 },
-  { x: -2.7, z: 1.9, radius: 0.78 },
+  { x: 3.4, z: -2.4, radius: 1.4 },
+  { x: -4.0, z: 2.8, radius: 1.1 },
+  { x: 1.2, z: 4.6, radius: 0.8 },
 ];
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
-camera.position.set(9, 8, 11);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 300);
+camera.position.set(13, 11, 16);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -50,7 +51,7 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.enablePan = false;
 controls.minDistance = 5;
-controls.maxDistance = 32;
+controls.maxDistance = 46;
 controls.maxPolarAngle = Math.PI * 0.49;
 controls.target.set(0, 1, 0);
 
@@ -466,6 +467,171 @@ function buildBuilding(seed) {
   });
   return group;
 }
+
+// ---- rocks & flower patches --------------------------------------------
+function buildRock(seed) {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x6b6558, roughness: 0.95, flatShading: true });
+  const chunks = 2 + (seed % 2);
+  for (let i = 0; i < chunks; i++) {
+    const s = 0.09 + ((seed >> (i * 3)) % 5) / 40;
+    const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(s, 0), mat);
+    rock.position.set((Math.random() - 0.5) * 0.14, s * 0.5, (Math.random() - 0.5) * 0.14);
+    rock.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    rock.castShadow = true;
+    rock.receiveShadow = true;
+    group.add(rock);
+  }
+  return group;
+}
+
+const FLOWER_COLORS = [0xf4a7b9, 0xf7e26b, 0xb98af4, 0xf4f4f4, 0xf4874a];
+function buildFlowerPatch(seed) {
+  const group = new THREE.Group();
+  const count = 4 + (seed % 4);
+  for (let i = 0; i < count; i++) {
+    const color = FLOWER_COLORS[(seed + i) % FLOWER_COLORS.length];
+    const flower = new THREE.Mesh(
+      new THREE.SphereGeometry(0.02, 5, 5),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.6 })
+    );
+    flower.position.set((Math.random() - 0.5) * 0.4, 0.03, (Math.random() - 0.5) * 0.4);
+    group.add(flower);
+  }
+  return group;
+}
+
+// ---- cozy decorative landmarks: tavern, well, windmill -------------------
+// Pure atmosphere — no click handler, no project ties, no gameplay effect.
+function buildTavern(seed) {
+  const group = new THREE.Group();
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x7d6b4f, roughness: 0.85, flatShading: true });
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0xb0a58f, roughness: 0.85, flatShading: true });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.85, flatShading: true });
+
+  const plinth = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.75, 0.8, 0.06, 12),
+    new THREE.MeshStandardMaterial({ color: 0x6b5d4a, roughness: 0.95, flatShading: true })
+  );
+  plinth.position.y = 0.03;
+  group.add(plinth);
+
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.6, 0.9), stoneMat);
+  base.position.y = 0.06 + 0.3;
+  group.add(base);
+  const upper = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.55, 0.8), woodMat);
+  upper.position.y = 0.06 + 0.6 + 0.275;
+  group.add(upper);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(0.85, 0.55, 4), roofMat);
+  roof.rotation.y = Math.PI / 4;
+  roof.scale.set(1.3, 0.75, 1);
+  roof.position.y = 0.06 + 0.6 + 0.55 + 0.2;
+  group.add(roof);
+
+  // hanging sign
+  const bracket = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.015, 0.015, 0.3, 5),
+    new THREE.MeshStandardMaterial({ color: 0x2b1f14, roughness: 0.9 })
+  );
+  bracket.rotation.z = Math.PI / 2;
+  bracket.position.set(0.62, 0.06 + 0.75, 0.3);
+  group.add(bracket);
+  const sign = new THREE.Mesh(
+    new THREE.BoxGeometry(0.2, 0.16, 0.02),
+    new THREE.MeshStandardMaterial({ color: 0xb8860b, roughness: 0.7, emissive: 0xff9a3c, emissiveIntensity: 0.15 })
+  );
+  sign.position.set(0.78, 0.06 + 0.62, 0.3);
+  group.add(sign);
+
+  // barrels out front
+  for (const bx of [-0.5, -0.35]) {
+    const barrel = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.09, 0.09, 0.18, 10),
+      new THREE.MeshStandardMaterial({ color: 0x5b3d26, roughness: 0.85 })
+    );
+    barrel.position.set(bx, 0.06 + 0.09, 0.55);
+    barrel.castShadow = true;
+    group.add(barrel);
+  }
+
+  const winMat = new THREE.MeshStandardMaterial({ color: 0x2a1c10, emissive: 0xff9a3c, emissiveIntensity: 0 });
+  const win = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.18), winMat);
+  win.position.set(0, 0.06 + 0.35, 0.451);
+  group.add(win);
+
+  group.userData.windowMat = winMat;
+  group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return group;
+}
+
+function buildWell(seed) {
+  const group = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x9a8f7a, roughness: 0.9, flatShading: true });
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x5b3d26, roughness: 0.85 });
+
+  const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.28, 10), stoneMat);
+  ring.position.y = 0.14;
+  group.add(ring);
+
+  for (const a of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.42, 6), woodMat);
+    post.position.set(a * 0.2, 0.28 + 0.21, 0);
+    group.add(post);
+  }
+  const roofBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.45, 5), woodMat);
+  roofBeam.rotation.z = Math.PI / 2;
+  roofBeam.position.y = 0.28 + 0.42;
+  group.add(roofBeam);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.22, 4), woodMat);
+  roof.rotation.y = Math.PI / 4;
+  roof.position.y = 0.28 + 0.42 + 0.13;
+  group.add(roof);
+
+  group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return group;
+}
+
+function buildWindmill(seed) {
+  const group = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0xc9b896, roughness: 0.85, flatShading: true });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.85, flatShading: true });
+
+  const plinth = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.4, 0.44, 0.06, 10),
+    new THREE.MeshStandardMaterial({ color: 0x6b5d4a, roughness: 0.95, flatShading: true })
+  );
+  plinth.position.y = 0.03;
+  group.add(plinth);
+
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.32, 1.1, 8), stoneMat);
+  tower.position.y = 0.06 + 0.55;
+  group.add(tower);
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.32, 8), roofMat);
+  cap.position.y = 0.06 + 1.1 + 0.16;
+  group.add(cap);
+
+  const hub = new THREE.Group();
+  hub.position.set(0, 0.06 + 1.0, 0.34);
+  const hubMat = new THREE.MeshStandardMaterial({ color: 0x4b3b2a, roughness: 0.8 });
+  const hubCore = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.06, 8), hubMat);
+  hubCore.rotation.x = Math.PI / 2;
+  hub.add(hubCore);
+  for (let i = 0; i < 4; i++) {
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.5, 0.02), hubMat);
+    blade.position.y = 0.28;
+    const pivot = new THREE.Group();
+    pivot.rotation.z = (Math.PI / 2) * i;
+    pivot.add(blade);
+    hub.add(pivot);
+  }
+  group.add(hub);
+  group.userData.hub = hub;
+
+  group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return group;
+}
+const windmills = [];
+const cozyBuildings = [];
 
 // ---- trees & bushes ---------------------------------------------------
 function buildTree(seed) {
@@ -942,7 +1108,7 @@ function generateDecor() {
     return occupied.some((o) => Math.hypot(x - o.x, z - o.z) < Math.max(minDist, o.r));
   }
 
-  function scatterRandom(count, build, minDist) {
+  function scatterRandom(count, build, minDist, onPlace) {
     let placed = 0;
     let attempts = 0;
     while (placed < count && attempts < count * 25) {
@@ -961,11 +1127,21 @@ function generateDecor() {
       decorGroup.add(obj);
       occupied.push({ x, z, r: minDist });
       placed++;
+      if (onPlace) onPlace(obj, seed);
     }
   }
 
-  scatterRandom(22, buildTree, 0.5);
-  scatterRandom(16, buildBush, 0.3);
+  scatterRandom(48, buildTree, 0.5);
+  scatterRandom(34, buildBush, 0.3);
+  scatterRandom(20, buildRock, 0.4);
+  scatterRandom(24, buildFlowerPatch, 0.25);
+
+  // Sparse, larger-footprint decorative landmarks — pure atmosphere, no
+  // click handler, no tie to any project. Placed with extra spacing so
+  // they read as destinations rather than clutter.
+  scatterRandom(1, buildTavern, 1.6, (obj) => cozyBuildings.push(obj));
+  scatterRandom(2, buildWell, 0.9);
+  scatterRandom(1, buildWindmill, 1.4, (obj) => windmills.push(obj));
 }
 
 // ---- a few birds circling the island for ambience ------------------------
@@ -1304,6 +1480,12 @@ function animate() {
     const flap = Math.sin(t * 10 + b.phase) * 0.7;
     b.obj.userData.wingL.rotation.z = flap;
     b.obj.userData.wingR.rotation.z = -flap;
+  }
+
+  for (const mill of windmills) mill.userData.hub.rotation.z = t * 0.6;
+  for (const cozy of cozyBuildings) {
+    const mat = cozy.userData.windowMat;
+    if (mat) mat.emissiveIntensity = 0.15 + nightFactor * (0.55 + Math.sin(t * 3) * 0.1);
   }
 
   updateCameraTween();
