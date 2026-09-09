@@ -199,7 +199,17 @@ function buildIsland() {
     const len = Math.hypot(x, y, z);
     const nx = x / len, ny = y / len, nz = z / len;
 
-    const flatten = 0.3 + 0.12 * Math.max(ny, 0);
+    // Soft-cap ny before it drives height: without this the island is a
+    // dome that peaks steeply at dead-center, so anything placed there
+    // (the Keep) sits atop a small mountain and the ground falls away
+    // fast just past it — no amount of *local* flattening fixes that,
+    // since the surrounding terrain a couple units out is genuinely much
+    // lower. Capping keeps the whole village area (out to the usual
+    // building-scatter radius) a gentle plateau; the coastline still
+    // slopes down normally since only high ny is affected.
+    const nyClamped = Math.max(ny, 0);
+    const nyForFlatten = nyClamped <= 0.5 ? nyClamped : 0.5 + (nyClamped - 0.5) * 0.12;
+    const flatten = 0.3 + 0.12 * nyForFlatten;
     let px = x * (0.86 + 0.09 * Math.sin(nz * 3.4 + 1.2));
     let pz = z * (0.86 + 0.09 * Math.cos(nx * 3.7));
     let py = ny * ISLAND_RADIUS * flatten;
