@@ -90,20 +90,30 @@ ipcMain.handle('agent:launch', (_evt, projectPath) => {
   let child;
   if (isWindows) {
     // Opens a new console window running `claude` in the project directory.
-    child = spawn('cmd.exe', ['/c', 'start', '""', 'cmd.exe', '/k', `cd /d "${projectPath}" && claude`], {
+    // projectPath is passed as its own argv entry (via /D) rather than
+    // interpolated into a shell command string, so it can't break out
+    // even if it contains quotes or shell metacharacters.
+    child = spawn('cmd.exe', ['/c', 'start', '""', '/D', projectPath, 'cmd.exe', '/k', 'claude'], {
       cwd: projectPath,
       detached: true,
       shell: false,
       windowsHide: false,
     });
   } else if (isMac) {
-    const script = `tell application "Terminal" to do script "cd '${projectPath.replace(/'/g, "'\\''")}' && claude"`;
+    // Escape for the POSIX shell (single-quote the path), then escape that
+    // result for the AppleScript double-quoted string it's embedded in.
+    const shQuoted = `'${projectPath.replace(/'/g, "'\\''")}'`;
+    const asQuoted = shQuoted.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const script = `tell application "Terminal" to do script "cd ${asQuoted} && claude"`;
     child = spawn('osascript', ['-e', script], { detached: true });
   } else {
-    child = spawn('x-terminal-emulator', ['-e', `bash -c "cd '${projectPath}' && claude; exec bash"`], {
-      cwd: projectPath,
-      detached: true,
-    });
+    // Pass projectPath as a positional arg ($0) instead of interpolating it
+    // into the shell command string.
+    child = spawn(
+      'x-terminal-emulator',
+      ['-e', 'bash', '-c', 'cd "$0" && claude; exec bash', projectPath],
+      { cwd: projectPath, detached: true }
+    );
   }
 
   activeSessions.set(projectPath, child);
