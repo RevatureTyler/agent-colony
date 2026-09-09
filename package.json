@@ -16,9 +16,16 @@
   "build": {
     "appId": "com.agentcolony.app",
     "productName": "Agent Colony",
-    "files": ["src/**/*", "package.json"],
+    "files": [
+      "src/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
     "win": {
       "target": "nsis"
     }
+  },
+  "dependencies": {
+    "three": "^0.186.0"
   }
 }

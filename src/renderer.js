@@ -1,343 +1,373 @@
-// --- Isometric hex-planet scene -------------------------------------------
-// Each registered project becomes a hex tile arranged in rings around a
-// center "hub", drawn as a small 3D-ish block with a building on top and a
-// little character that idles or walks when a claude session is active.
+import * as THREE from 'three';
+import { OrbitControls } from '../node_modules/three/examples/jsm/controls/OrbitControls.js';
 
-const canvas = document.getElementById('scene');
-const ctx = canvas.getContext('2d');
+window.addEventListener('error', (e) => console.error('[scene]', e.message, e.filename, e.lineno));
+window.addEventListener('unhandledrejection', (e) => console.error('[scene]', e.reason));
+
+// ---------------------------------------------------------------------
+// A small floating "island planet". Projects scatter organically across
+// the top surface as little buildings with a resident character each.
+// Scroll to zoom, drag to orbit; click a building to launch, right-click
+// to remove.
+// ---------------------------------------------------------------------
+
+const wrap = document.getElementById('scene-wrap');
 const emptyMsg = document.getElementById('empty');
 
-const HEX_SIZE = 46; // center-to-corner radius, in world units
-const SQUISH = 0.62; // vertical squash for the isometric look
-const TILE_DEPTH = 16; // how "thick" each hex block looks
+const ISLAND_RADIUS = 6;
 
-let projects = []; // [{ path, name, active }]
-let tiles = []; // [{ project|null, cube:{x,y,z}, px, py, buildingSeed, walk }]
-let hovered = null;
-let stars = [];
-let t = 0;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x070a12);
+scene.fog = new THREE.FogExp2(0x070a12, 0.028);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
+camera.position.set(9, 8, 11);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+wrap.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.enablePan = false;
+controls.minDistance = 6;
+controls.maxDistance = 32;
+controls.maxPolarAngle = Math.PI * 0.49;
+controls.target.set(0, 1, 0);
 
 function resize() {
-  canvas.width = canvas.clientWidth * devicePixelRatio;
-  canvas.height = canvas.clientHeight * devicePixelRatio;
+  const w = wrap.clientWidth;
+  const h = wrap.clientHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
 }
 window.addEventListener('resize', resize);
 
-// ---- hex cube-coordinate spiral (red-blob-games style) --------------------
-const DIRS = [
-  { x: 1, y: -1, z: 0 },
-  { x: 1, y: 0, z: -1 },
-  { x: 0, y: 1, z: -1 },
-  { x: -1, y: 1, z: 0 },
-  { x: -1, y: 0, z: 1 },
-  { x: 0, y: -1, z: 1 },
-];
-const cubeAdd = (a, b) => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z });
-const cubeScale = (a, k) => ({ x: a.x * k, y: a.y * k, z: a.z * k });
+// ---- lighting -------------------------------------------------------
+scene.add(new THREE.AmbientLight(0x8fa5ff, 0.55));
+const sun = new THREE.DirectionalLight(0xfff2d6, 1.1);
+sun.position.set(8, 14, 6);
+scene.add(sun);
+const rim = new THREE.PointLight(0x5470ff, 0.8, 40);
+rim.position.set(-8, 6, -8);
+scene.add(rim);
 
-function spiral(count) {
-  const results = [{ x: 0, y: 0, z: 0 }];
-  let ring = 1;
-  while (results.length < count) {
-    let hex = cubeAdd({ x: 0, y: 0, z: 0 }, cubeScale(DIRS[4], ring));
-    for (let side = 0; side < 6; side++) {
-      for (let step = 0; step < ring; step++) {
-        results.push(hex);
-        hex = cubeAdd(hex, DIRS[side]);
-      }
-    }
-    ring++;
+// ---- starfield --------------------------------------------------------
+{
+  const starGeo = new THREE.BufferGeometry();
+  const count = 800;
+  const positions = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const r = 60 + Math.random() * 60;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+    positions[i * 3 + 1] = Math.abs(r * Math.cos(phi));
+    positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
   }
-  return results.slice(0, count);
+  starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.35, sizeAttenuation: true });
+  scene.add(new THREE.Points(starGeo, starMat));
 }
 
-function cubeToPixel(cube) {
-  const x = HEX_SIZE * 1.5 * cube.x;
-  const y = HEX_SIZE * Math.sqrt(3) * (cube.z + cube.x / 2);
-  return { x, y: y * SQUISH };
+// ---- organic island terrain --------------------------------------------
+function buildIsland() {
+  const group = new THREE.Group();
+
+  const geo = new THREE.IcosahedronGeometry(ISLAND_RADIUS, 4);
+  const pos = geo.attributes.position;
+  const colors = new Float32Array(pos.count * 3);
+  const top = new THREE.Color(0x3f8f5c);
+  const mid = new THREE.Color(0x2f6b46);
+  const rock = new THREE.Color(0x4b4438);
+
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const len = Math.hypot(x, y, z);
+    const nx = x / len, ny = y / len, nz = z / len;
+
+    // flatten into a lens/island shape rather than a full sphere
+    const flatten = 0.34 + 0.1 * Math.max(ny, 0);
+    let py = ny * ISLAND_RADIUS * flatten;
+
+    // organic bumps via layered sine noise (keeps us dependency-free)
+    const bump =
+      Math.sin(nx * 5.2 + nz * 3.1) * 0.35 +
+      Math.sin(nx * 9.7 - nz * 6.3 + 1.7) * 0.16 +
+      Math.sin(nz * 13.1 + nx * 2.4) * 0.08;
+    const bumpAmount = ny > 0.05 ? bump * 0.9 : bump * 0.15; // calmer underside
+    py += bumpAmount;
+
+    pos.setXYZ(i, x * (0.9 + 0.05 * Math.sin(nz * 4)), py, z * (0.9 + 0.05 * Math.cos(nx * 4)));
+
+    const c = ny > 0.15 ? top.clone().lerp(mid, Math.random() * 0.4) : rock.clone().lerp(mid, 0.2);
+    colors[i * 3] = c.r;
+    colors[i * 3 + 1] = c.g;
+    colors[i * 3 + 2] = c.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'islandSurface';
+  group.add(mesh);
+
+  // soft underglow so the island reads as floating
+  const glowGeo = new THREE.CircleGeometry(ISLAND_RADIUS * 1.3, 32);
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0x3d5aff, transparent: true, opacity: 0.12 });
+  const glow = new THREE.Mesh(glowGeo, glowMat);
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = -ISLAND_RADIUS * 0.5;
+  group.add(glow);
+
+  return { group, mesh };
 }
 
+const { group: islandGroup, mesh: islandMesh } = buildIsland();
+scene.add(islandGroup);
+
+const raycaster = new THREE.Raycaster();
+function surfacePointAt(x, z) {
+  raycaster.set(new THREE.Vector3(x, ISLAND_RADIUS * 2, z), new THREE.Vector3(0, -1, 0));
+  const hit = raycaster.intersectObject(islandMesh, false)[0];
+  return hit ? hit.point : null;
+}
+
+// ---- organic scatter (sunflower / phyllotaxis layout) -------------------
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+function scatterPoint(index, totalGuess) {
+  const spread = ISLAND_RADIUS * 0.72;
+  const r = spread * Math.sqrt((index + 0.5) / Math.max(totalGuess, 6));
+  const theta = index * GOLDEN_ANGLE;
+  return { x: r * Math.cos(theta), z: r * Math.sin(theta) };
+}
+
+// ---- building + character construction ----------------------------------
 function seedFrom(str) {
   let h = 0;
   for (const ch of str) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return h;
 }
 
-function rebuildTiles() {
-  const coords = spiral(Math.max(projects.length + 1, 7));
-  tiles = coords.map((cube, i) => {
-    const project = projects[i] || null;
-    const p = cubeToPixel(cube);
-    return {
-      project,
-      cube,
-      px: p.x,
-      py: p.y,
-      isAddSlot: !project,
-      buildingSeed: project ? seedFrom(project.name) : 0,
-      walkPhase: Math.random() * Math.PI * 2,
-    };
+const PALETTE = [0x7dd3fc, 0xfca5a5, 0xfcd34d, 0xa5b4fc, 0x86efac, 0xf0abfc];
+
+function buildBuilding(seed) {
+  const group = new THREE.Group();
+  const hue = PALETTE[seed % PALETTE.length];
+  const height = 0.9 + ((seed >> 3) % 10) / 10;
+  const width = 0.55 + ((seed >> 6) % 5) / 20;
+
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(width, height, width),
+    new THREE.MeshStandardMaterial({ color: hue, roughness: 0.6, flatShading: true })
+  );
+  body.position.y = height / 2;
+  group.add(body);
+
+  const roofHeight = 0.35 + ((seed >> 9) % 4) / 10;
+  const roof = new THREE.Mesh(
+    new THREE.ConeGeometry(width * 0.85, roofHeight, 4),
+    new THREE.MeshStandardMaterial({ color: 0xe8ecf5, roughness: 0.5, flatShading: true })
+  );
+  roof.rotation.y = Math.PI / 4;
+  roof.position.y = height + roofHeight / 2;
+  group.add(roof);
+
+  group.userData.windowMat = new THREE.MeshStandardMaterial({
+    color: 0x1c4a30,
+    emissive: 0x000000,
+    emissiveIntensity: 0,
   });
+  const win = new THREE.Mesh(new THREE.PlaneGeometry(width * 0.3, width * 0.3), group.userData.windowMat);
+  win.position.set(0, height * 0.6, width / 2 + 0.01);
+  group.add(win);
+
+  group.userData.height = height + roofHeight;
+  return group;
 }
 
-function makeStars(n) {
-  stars = Array.from({ length: n }, () => ({
-    x: Math.random(),
-    y: Math.random(),
-    r: Math.random() * 1.4 + 0.3,
-    phase: Math.random() * Math.PI * 2,
-  }));
-}
-makeStars(140);
-
-// ---- drawing ----------------------------------------------------------
-function hexPoints(cx, cy, size) {
-  const pts = [];
-  for (let i = 0; i < 6; i++) {
-    const angle = (Math.PI / 180) * (60 * i);
-    pts.push([cx + size * Math.cos(angle), cy + size * Math.sin(angle) * SQUISH]);
+function buildCharacter(active) {
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.SphereGeometry(0.16, 10, 10),
+    new THREE.MeshStandardMaterial({ color: 0xffe08a, roughness: 0.5 })
+  );
+  group.add(body);
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x20242f });
+  for (const dx of [-0.06, 0.06]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 6), eyeMat);
+    eye.position.set(dx, 0.02, 0.14);
+    group.add(eye);
   }
-  return pts;
+  return group;
 }
 
-function drawHexPath(cx, cy, size) {
-  const pts = hexPoints(cx, cy, size);
-  ctx.beginPath();
-  ctx.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-  ctx.closePath();
-}
+// ---- scene graph for projects -------------------------------------------
+const tiles = new Map(); // path -> { group, building, character, walkPhase, hitMesh }
+const ADD_SLOT_KEY = '__add__';
+let hoveredHit = null;
 
-function drawTileBlock(cx, cy, topColor, sideColor, size) {
-  // side (extruded) faces first, so the top face draws over the seam
-  const pts = hexPoints(cx, cy, size);
-  ctx.fillStyle = sideColor;
-  for (let i = 0; i < 6; i++) {
-    const [x1, y1] = pts[i];
-    const [x2, y2] = pts[(i + 1) % 6];
-    if (y1 < cy && y2 < cy) continue; // skip top-facing edges (back side)
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.lineTo(x2, y2 + TILE_DEPTH);
-    ctx.lineTo(x1, y1 + TILE_DEPTH);
-    ctx.closePath();
-    ctx.fill();
-  }
-  drawHexPath(cx, cy, size);
-  ctx.fillStyle = topColor;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-}
-
-function drawBuilding(cx, cy, seed, active) {
-  const rnd = (n) => ((seed >> n) & 0xff) / 255;
-  const h = 18 + rnd(0) * 22;
-  const w = 20 + rnd(8) * 10;
-  const hueA = ['#7dd3fc', '#fca5a5', '#fcd34d', '#a5b4fc', '#86efac'][seed % 5];
-  const hueB = ['#0ea5e9', '#ef4444', '#f59e0b', '#6366f1', '#22c55e'][seed % 5];
-
-  const baseY = cy - 4;
-  // body
-  ctx.fillStyle = hueB;
-  ctx.fillRect(cx - w / 2, baseY - h, w, h);
-  ctx.fillStyle = hueA;
-  ctx.fillRect(cx - w / 2, baseY - h, w * 0.5, h);
-  // roof
-  ctx.beginPath();
-  ctx.moveTo(cx - w / 2 - 3, baseY - h);
-  ctx.lineTo(cx + w / 2 + 3, baseY - h);
-  ctx.lineTo(cx, baseY - h - 12);
-  ctx.closePath();
-  ctx.fillStyle = active ? '#6ee89f' : '#cbd5f5';
-  ctx.fill();
-  // window glow
-  if (active) {
-    ctx.fillStyle = 'rgba(110,232,159,0.85)';
-    ctx.fillRect(cx - w / 4, baseY - h * 0.5, 4, 4);
-    ctx.fillRect(cx + w / 8, baseY - h * 0.5, 4, 4);
-  }
-}
-
-function drawCharacter(cx, cy, tile, active) {
-  const bob = active ? Math.sin(t * 4 + tile.walkPhase) * 2 : Math.sin(t + tile.walkPhase) * 0.6;
-  const walkX = active ? Math.cos(t * 1.6 + tile.walkPhase) * 16 : 0;
-  const x = cx + walkX;
-  const y = cy + 6 + bob;
-
-  // shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  ctx.beginPath();
-  ctx.ellipse(x, cy + 8, 7, 2.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // body
-  ctx.fillStyle = active ? '#ffe08a' : '#c9d3e6';
-  ctx.beginPath();
-  ctx.arc(x, y, 6, 0, Math.PI * 2);
-  ctx.fill();
-
-  // face
-  ctx.fillStyle = '#20242f';
-  ctx.beginPath();
-  ctx.arc(x - 2, y - 1, 1, 0, Math.PI * 2);
-  ctx.arc(x + 2, y - 1, 1, 0, Math.PI * 2);
-  ctx.fill();
-  if (active) {
-    ctx.strokeStyle = '#20242f';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(x, y + 1, 2, 0, Math.PI);
-    ctx.stroke();
-  }
-}
-
-function drawStars() {
-  ctx.save();
-  for (const s of stars) {
-    const alpha = 0.4 + 0.6 * Math.abs(Math.sin(t * 0.8 + s.phase));
-    ctx.fillStyle = `rgba(255,255,255,${alpha.toFixed(2)})`;
-    ctx.beginPath();
-    ctx.arc(s.x * canvas.width, s.y * canvas.height, s.r * devicePixelRatio, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
-function draw() {
-  const w = canvas.width;
-  const h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
-
-  // space background
-  ctx.fillStyle = '#070a12';
-  ctx.fillRect(0, 0, w, h);
-  drawStars();
-
-  ctx.save();
-  ctx.translate(w / 2, h / 2);
-  ctx.scale(devicePixelRatio, devicePixelRatio);
-
-  // planet glow behind the tiles
-  const radius = HEX_SIZE * 1.5 * (Math.sqrt(tiles.length) + 2);
-  const glow = ctx.createRadialGradient(0, 0, radius * 0.1, 0, 0, radius);
-  glow.addColorStop(0, 'rgba(61,90,255,0.22)');
-  glow.addColorStop(1, 'rgba(61,90,255,0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(0, 0, radius, 0, Math.PI * 2);
-  ctx.fill();
-
-  // draw back-to-front by py so overlapping tiles look layered
-  const ordered = [...tiles].sort((a, b) => a.py - b.py);
-  for (const tile of ordered) {
-    const isHover = hovered === tile;
-    const size = HEX_SIZE * (isHover ? 1.05 : 1);
-
-    if (tile.isAddSlot) {
-      drawHexPath(tile.px, tile.py, size);
-      ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = 'rgba(108,122,153,0.6)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.setLineDash([]);
-      if (tile === tiles.find((x) => x.isAddSlot)) {
-        ctx.fillStyle = 'rgba(108,122,153,0.6)';
-        ctx.font = '20px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('+', tile.px, tile.py + 7);
-      }
-      continue;
-    }
-
-    const active = tile.project.active;
-    const top = active ? '#1c4a30' : '#24304a';
-    const side = active ? '#123322' : '#182238';
-    drawTileBlock(tile.px, tile.py, top, side, size);
-    drawBuilding(tile.px, tile.py - 6, tile.buildingSeed, active);
-    drawCharacter(tile.px, tile.py + 4, tile, active);
-
-    ctx.fillStyle = active ? '#9ff5c4' : '#9fb0d0';
-    ctx.font = '11px -apple-system, "Segoe UI", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(tile.project.name, tile.px, tile.py + TILE_DEPTH + 22);
-    ctx.fillStyle = active ? '#6ee89f' : '#5c6a8a';
-    ctx.font = '9px -apple-system, "Segoe UI", sans-serif';
-    ctx.fillText(active ? 'session open' : 'idle', tile.px, tile.py + TILE_DEPTH + 34);
-  }
-
-  ctx.restore();
-}
-
-function loop() {
-  t += 0.016;
-  draw();
-  requestAnimationFrame(loop);
-}
-
-// ---- interaction --------------------------------------------------------
-function eventToWorld(evt) {
-  const rect = canvas.getBoundingClientRect();
-  const x = (evt.clientX - rect.left) * devicePixelRatio - canvas.width / 2;
-  const y = (evt.clientY - rect.top) * devicePixelRatio - canvas.height / 2;
-  return { x: x / devicePixelRatio, y: y / devicePixelRatio };
-}
-
-function tileAt(worldX, worldY) {
-  let closest = null;
-  let closestDist = Infinity;
-  for (const tile of tiles) {
-    const dx = worldX - tile.px;
-    const dy = (worldY - (tile.py + TILE_DEPTH / 2)) / SQUISH;
-    const dist = Math.hypot(dx, dy);
-    if (dist < HEX_SIZE && dist < closestDist) {
-      closest = tile;
-      closestDist = dist;
-    }
-  }
-  return closest;
-}
-
-canvas.addEventListener('mousemove', (evt) => {
-  const { x, y } = eventToWorld(evt);
-  hovered = tileAt(x, y);
-  canvas.style.cursor = hovered ? 'pointer' : 'default';
-});
-
-canvas.addEventListener('mouseleave', () => { hovered = null; });
-
-canvas.addEventListener('click', (evt) => {
-  const { x, y } = eventToWorld(evt);
-  const tile = tileAt(x, y);
+function clearTile(path) {
+  const tile = tiles.get(path);
   if (!tile) return;
-  if (tile.isAddSlot) {
-    window.agentColony.addProject().then(refreshProjects);
+  islandGroup.remove(tile.group);
+  tiles.delete(path);
+}
+
+function placeTile(key, index, totalGuess, isAddSlot, project) {
+  const { x, z } = scatterPoint(index, totalGuess);
+  const surface = surfacePointAt(x, z) || new THREE.Vector3(x, 0, z);
+
+  const group = new THREE.Group();
+  group.position.copy(surface);
+  islandGroup.add(group);
+
+  let hitMesh;
+  if (isAddSlot) {
+    const pad = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.4, 0.4, 0.08, 16),
+      new THREE.MeshStandardMaterial({ color: 0x6c7a99, transparent: true, opacity: 0.5, emissive: 0x3d5aff, emissiveIntensity: 0.3 })
+    );
+    pad.position.y = 0.04;
+    group.add(pad);
+    const plus = new THREE.Mesh(
+      new THREE.BoxGeometry(0.3, 0.06, 0.06),
+      new THREE.MeshStandardMaterial({ color: 0xe8ecf5 })
+    );
+    plus.position.y = 0.15;
+    const plus2 = plus.clone();
+    plus2.rotation.y = Math.PI / 2;
+    group.add(plus, plus2);
+    hitMesh = pad;
   } else {
-    window.agentColony.launchAgent(tile.project.path);
+    const seed = seedFrom(project.name);
+    const building = buildBuilding(seed);
+    group.add(building);
+    const character = buildCharacter(project.active);
+    character.position.set(0.5, 0, 0.3);
+    group.add(character);
+
+    hitMesh = building.children[0];
+    tiles.set(key, { group, building, character, walkPhase: Math.random() * Math.PI * 2, hitMesh, project });
   }
+
+  hitMesh.userData.tileKey = key;
+  return hitMesh;
+}
+
+let projects = [];
+const clickables = [];
+
+function rebuildScene() {
+  for (const [key] of tiles) clearTile(key);
+  while (islandGroup.children.length > 2) islandGroup.remove(islandGroup.children[islandGroup.children.length - 1]);
+  clickables.length = 0;
+
+  const total = projects.length + 1;
+  projects.forEach((project, i) => {
+    const hit = placeTile(project.path, i, total, false, project);
+    clickables.push(hit);
+  });
+  const addHit = placeTile(ADD_SLOT_KEY, projects.length, total, true, null);
+  clickables.push(addHit);
+}
+
+// ---- interaction ----------------------------------------------------
+const pointer = new THREE.Vector2();
+let downPos = null;
+
+function updatePointer(evt) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((evt.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function pickTileKey() {
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(clickables, false);
+  return hits.length ? hits[0].object.userData.tileKey : null;
+}
+
+renderer.domElement.addEventListener('pointerdown', (evt) => {
+  downPos = { x: evt.clientX, y: evt.clientY };
 });
 
-canvas.addEventListener('contextmenu', async (evt) => {
-  evt.preventDefault();
-  const { x, y } = eventToWorld(evt);
-  const tile = tileAt(x, y);
-  if (!tile || tile.isAddSlot) return;
-  if (confirm(`Remove "${tile.project.name}" from Agent Colony?`)) {
-    await window.agentColony.removeProject(tile.project.path);
+renderer.domElement.addEventListener('pointerup', async (evt) => {
+  if (!downPos) return;
+  const moved = Math.hypot(evt.clientX - downPos.x, evt.clientY - downPos.y);
+  downPos = null;
+  if (moved > 6) return; // treat as a drag/orbit, not a click
+
+  updatePointer(evt);
+  const key = pickTileKey();
+  if (!key) return;
+
+  if (evt.button === 2) {
+    if (key === ADD_SLOT_KEY) return;
+    const tile = tiles.get(key);
+    if (tile && confirm(`Remove "${tile.project.name}" from Agent Colony?`)) {
+      await window.agentColony.removeProject(key);
+      refreshProjects();
+    }
+    return;
+  }
+
+  if (key === ADD_SLOT_KEY) {
+    await window.agentColony.addProject();
     refreshProjects();
+  } else {
+    window.agentColony.launchAgent(key);
   }
 });
 
-// ---- data ---------------------------------------------------------------
+renderer.domElement.addEventListener('contextmenu', (evt) => evt.preventDefault());
+
+renderer.domElement.addEventListener('pointermove', (evt) => {
+  updatePointer(evt);
+  const key = pickTileKey();
+  hoveredHit = key;
+  renderer.domElement.style.cursor = key ? 'pointer' : 'grab';
+});
+
+// ---- data -------------------------------------------------------------
 async function refreshProjects() {
   projects = await window.agentColony.listProjects();
-  emptyMsg.hidden = true; // the "+" tile always shows the way in
-  rebuildTiles();
+  emptyMsg.hidden = true;
+  rebuildScene();
 }
-
 window.agentColony.onStatus(refreshProjects);
 
+// ---- animation loop -----------------------------------------------------
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+
+  for (const tile of tiles.values()) {
+    const active = tile.project.active;
+    const mat = tile.building.userData.windowMat;
+    mat.emissive.set(active ? 0x6ee89f : 0x000000);
+    mat.emissiveIntensity = active ? 0.9 + Math.sin(t * 3) * 0.1 : 0;
+
+    const phase = tile.walkPhase;
+    if (active) {
+      tile.character.position.x = 0.5 + Math.cos(t * 1.4 + phase) * 0.25;
+      tile.character.position.z = 0.3 + Math.sin(t * 1.4 + phase) * 0.25;
+      tile.character.position.y = Math.abs(Math.sin(t * 6 + phase)) * 0.05;
+      tile.character.rotation.y = t * 1.4 + phase;
+    } else {
+      tile.character.position.y = Math.sin(t * 1.2 + phase) * 0.02;
+    }
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
 resize();
-refreshProjects().then(loop);
+refreshProjects().then(animate);

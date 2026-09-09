@@ -31,6 +31,9 @@ function createWindow() {
     },
   });
   mainWindow.setMenuBarVisibility(false);
+  mainWindow.webContents.on('console-message', (_evt, _level, message, line, sourceId) => {
+    console.log(`[renderer] ${message} (${sourceId}:${line})`);
+  });
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 }
 
