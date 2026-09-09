@@ -199,22 +199,21 @@ function buildIsland() {
     const len = Math.hypot(x, y, z);
     const nx = x / len, ny = y / len, nz = z / len;
 
-    // Soft-cap ny before it drives height: without this the island is a
-    // dome that peaks steeply at dead-center, so anything placed there
-    // (the Keep) sits atop a small mountain and the ground falls away
-    // fast just past it — no amount of *local* flattening fixes that,
-    // since the surrounding terrain a couple units out is genuinely much
-    // lower. Capping keeps the whole village area (out to the usual
-    // building-scatter radius) a gentle plateau; the coastline still
-    // slopes down normally since only high ny is affected.
-    const nyClamped = Math.max(ny, 0);
-    const nyForFlatten = nyClamped <= 0.5 ? nyClamped : 0.5 + (nyClamped - 0.5) * 0.12;
-    const flatten = 0.3 + 0.12 * nyForFlatten;
+    // Soft-cap ny before it drives height — applied to the SAME capped
+    // value used everywhere below (both the linear term and the flatten
+    // multiplier were using raw ny before, so the previous cap barely
+    // changed anything: py = ny * RADIUS * flatten still grew almost
+    // linearly all the way to the true dome peak at ny=1). Now the whole
+    // village area (ny up to ~0.6) is a gentle plateau; the coastline
+    // still slopes down normally since only high ny is affected.
+    const nyRaw = Math.max(ny, 0);
+    const nyHeight = nyRaw <= 0.5 ? nyRaw : 0.5 + (nyRaw - 0.5) * 0.15;
+    const flatten = 0.22 + 0.06 * nyHeight;
     let px = x * (0.86 + 0.09 * Math.sin(nz * 3.4 + 1.2));
     let pz = z * (0.86 + 0.09 * Math.cos(nx * 3.7));
-    let py = ny * ISLAND_RADIUS * flatten;
+    let py = nyHeight * ISLAND_RADIUS * flatten;
     const bump = heightNoise(nx, ny, nz);
-    py += ny > 0.05 ? bump * 0.5 : bump * 0.12;
+    py += ny > 0.05 ? bump * 0.25 : bump * 0.08;
 
     let inLake = false;
     if (ny > 0) {
@@ -222,7 +221,7 @@ function buildIsland() {
         const d = Math.hypot(px - lake.x, pz - lake.z);
         if (d < lake.radius) {
           const dip = 1 - d / lake.radius;
-          py -= dip * dip * 0.55;
+          py -= dip * dip * 0.3;
           if (d < lake.radius * 0.82) inLake = true;
         }
       }
