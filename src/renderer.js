@@ -742,6 +742,84 @@ function buildRoads(spots) {
   }
 }
 
+// ---- wandering villagers: pure decoration, no ties to any project -------
+const wanderersGroup = new THREE.Group();
+islandGroup.add(wanderersGroup);
+const wanderers = [];
+
+function pickWanderSpot() {
+  for (let tries = 0; tries < 20; tries++) {
+    const angle = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(Math.random()) * ISLAND_RADIUS * 0.85;
+    const x = Math.cos(angle) * r;
+    const z = Math.sin(angle) * r;
+    if (LAKES.some((l) => Math.hypot(x - l.x, z - l.z) < l.radius + 0.2)) continue;
+    const surface = surfacePointAt(x, z);
+    if (!surface || surface.y < -1.4) continue;
+    return surface;
+  }
+  return new THREE.Vector3(0, 0, 0);
+}
+
+function spawnWanderers(count) {
+  for (let i = 0; i < count; i++) {
+    const seed = Math.floor(Math.random() * 1e6);
+    const person = buildPerson(seed);
+    const scale = 0.9 + Math.random() * 0.25;
+    person.scale.setScalar(scale);
+    const start = pickWanderSpot();
+    person.position.copy(start);
+    wanderersGroup.add(person);
+    wanderers.push({
+      person,
+      target: pickWanderSpot(),
+      speed: 0.22 + Math.random() * 0.18,
+      walkPhase: Math.random() * Math.PI * 2,
+      pauseUntil: 0,
+    });
+  }
+}
+
+function updateWanderers(t, dtSec) {
+  const now = performance.now();
+  for (const w of wanderers) {
+    const p = w.person;
+    const { legL, legR, armL, armR } = p.userData;
+
+    if (now < w.pauseUntil) {
+      legL.rotation.x = 0;
+      legR.rotation.x = 0;
+      armL.rotation.x = Math.sin(t * 1.2 + w.walkPhase) * 0.05;
+      armR.rotation.x = -Math.sin(t * 1.2 + w.walkPhase) * 0.05;
+      continue;
+    }
+
+    const dx = w.target.x - p.position.x;
+    const dz = w.target.z - p.position.z;
+    const dist = Math.hypot(dx, dz);
+
+    if (dist < 0.1) {
+      w.target = pickWanderSpot();
+      w.pauseUntil = now + 1200 + Math.random() * 2800;
+      continue;
+    }
+
+    const step = Math.min(dist, w.speed * dtSec);
+    p.position.x += (dx / dist) * step;
+    p.position.z += (dz / dist) * step;
+    const surface = surfacePointAt(p.position.x, p.position.z);
+    if (surface) p.position.y = surface.y;
+    p.rotation.y = Math.atan2(dx, dz);
+
+    const swing = Math.sin(t * 6.5 + w.walkPhase) * 0.5;
+    legL.rotation.x = swing;
+    legR.rotation.x = -swing;
+    armL.rotation.x = -swing * 0.75;
+    armR.rotation.x = swing * 0.75;
+    p.position.y += Math.abs(Math.sin(t * 6.5 + w.walkPhase)) * 0.025;
+  }
+}
+
 // ---- scene graph for projects -------------------------------------------
 const tiles = new Map(); // path -> { group, building, person, walkPhase, hitMesh, project }
 const ADD_SLOT_KEY = '__add__';
@@ -1163,11 +1241,16 @@ window.agentColony.onStatus(refreshProjects);
 const clock = new THREE.Clock();
 let lastDayCycleUpdate = 0;
 let lastSidebarTick = 0;
+let lastFrameMs = performance.now();
 
 function animate() {
   requestAnimationFrame(animate);
   const t = clock.getElapsedTime();
   const now = performance.now();
+  const dtSec = Math.min((now - lastFrameMs) / 1000, 0.1);
+  lastFrameMs = now;
+
+  updateWanderers(t, dtSec);
 
   if (now - lastDayCycleUpdate > 2000) {
     applyDayCycle();
@@ -1233,5 +1316,6 @@ resize();
 applyDayCycle();
 refreshProjects().then(() => {
   generateDecor();
+  spawnWanderers(8);
   animate();
 });
