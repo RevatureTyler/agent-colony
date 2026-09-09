@@ -272,6 +272,45 @@ function surfacePointAt(x, z) {
   return hit ? hit.point : null;
 }
 
+// ---- terrain flattening so buildings sit properly on the ground ---------
+// The terrain is bumpy; a building's flat base would otherwise float over
+// a dip or clip into a rise. We keep a pristine copy of the geometry and,
+// on every rebuild, reset to it then carve smooth flat pads (smoothstep
+// falloff) at the current building/keep/waypost positions before placing
+// anything — so re-sampled ground height under each building is exactly
+// where its base sits, however the layout has shifted since last time.
+const basePositions = islandMesh.geometry.attributes.position.array.slice();
+
+function resetTerrain() {
+  islandMesh.geometry.attributes.position.array.set(basePositions);
+}
+
+function flattenSpots(spots) {
+  const posAttr = islandMesh.geometry.attributes.position;
+  const arr = posAttr.array;
+  for (let i = 0; i < arr.length; i += 3) {
+    const vx = arr[i];
+    const vy = arr[i + 1];
+    const vz = arr[i + 2];
+    let bestBlend = 0;
+    let bestY = vy;
+    for (const s of spots) {
+      const d = Math.hypot(vx - s.x, vz - s.z);
+      if (d < s.radius) {
+        const b = 1 - d / s.radius;
+        const eased = b * b * (3 - 2 * b);
+        if (eased > bestBlend) {
+          bestBlend = eased;
+          bestY = s.y;
+        }
+      }
+    }
+    if (bestBlend > 0) arr[i + 1] = vy + (bestY - vy) * bestBlend;
+  }
+  posAttr.needsUpdate = true;
+  islandMesh.geometry.computeVertexNormals();
+}
+
 // ---- deterministic scatter for buildings (kept orderly / "planned") -----
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 function scatterPoint(index, totalGuess) {
@@ -299,6 +338,9 @@ const SKIN_TONES = [0xf2c9a1, 0xd8a273, 0xa9704f, 0x8d5a3c, 0xf7dcc0];
 const HAIR_COLORS = [0x3a2a1e, 0x1c1c1c, 0x8a5a2b, 0xd9b45c, 0x6b3f2a, 0xcfcfcf];
 const TUNIC_COLORS = [0x8b1a1a, 0x2f5233, 0x4a3b2a, 0x1a3d6b, 0xb8860b, 0x5c4033];
 const PANTS_COLORS = [0x3e2f24, 0x4b3b2a, 0x2b2620, 0x5c4a38];
+const CLOAK_COLORS = [0x3a2f5c, 0x1a3d6b, 0x2f5233, 0x5c2a2a, 0x4a3b2a];
+const BELT_COLOR = 0x2b1f14;
+const BOOT_COLOR = 0x2b1f14;
 const HEARTH_GLOW = 0xff9a3c;
 
 function seedFrom(str) {
@@ -467,11 +509,16 @@ function buildPerson(seed) {
   const tunic = TUNIC_COLORS[(seed >> 2) % TUNIC_COLORS.length];
   const pants = PANTS_COLORS[(seed >> 4) % PANTS_COLORS.length];
   const hair = HAIR_COLORS[(seed >> 6) % HAIR_COLORS.length];
+  const cloakColor = CLOAK_COLORS[(seed >> 10) % CLOAK_COLORS.length];
+  const hasCloak = (seed & 1) === 0;
+  const hasBeard = ((seed >> 8) % 3) === 0;
 
   const hipY = 0.16;
   const legLen = 0.16;
   const torsoH = 0.18;
 
+  const skinMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.7 });
+  const bootMat = new THREE.MeshStandardMaterial({ color: BOOT_COLOR, roughness: 0.85 });
   const legMat = new THREE.MeshStandardMaterial({ color: pants, roughness: 0.8 });
   const legGeo = new THREE.CapsuleGeometry(0.035, legLen, 4, 6);
   function makeLeg(xOff) {
@@ -479,6 +526,9 @@ function buildPerson(seed) {
     const mesh = new THREE.Mesh(legGeo, legMat);
     mesh.position.y = -legLen / 2;
     pivot.add(mesh);
+    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, 0.075), bootMat);
+    boot.position.set(0, -legLen - 0.02, 0.012);
+    pivot.add(boot);
     pivot.position.set(xOff, hipY, 0);
     return pivot;
   }
@@ -491,16 +541,36 @@ function buildPerson(seed) {
     new THREE.MeshStandardMaterial({ color: tunic, roughness: 0.75 })
   );
   const shoulderY = hipY + legLen + torsoH * 0.85;
-  torso.position.y = hipY + legLen + torsoH / 2;
+  const waistY = hipY + legLen;
+  torso.position.y = waistY + torsoH / 2;
   group.add(torso);
 
-  const armMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.7 });
+  const belt = new THREE.Mesh(
+    new THREE.TorusGeometry(0.072, 0.012, 6, 12),
+    new THREE.MeshStandardMaterial({ color: BELT_COLOR, roughness: 0.8 })
+  );
+  belt.rotation.x = Math.PI / 2;
+  belt.position.y = waistY + 0.02;
+  group.add(belt);
+
+  if (hasCloak) {
+    const cloak = new THREE.Mesh(
+      new THREE.BoxGeometry(0.15, torsoH + 0.06, 0.02),
+      new THREE.MeshStandardMaterial({ color: cloakColor, roughness: 0.85, flatShading: true })
+    );
+    cloak.position.set(0, waistY + (torsoH + 0.06) / 2 - 0.02, -0.06);
+    group.add(cloak);
+  }
+
   const armGeo = new THREE.CapsuleGeometry(0.028, 0.16, 4, 6);
   function makeArm(xOff) {
     const pivot = new THREE.Group();
-    const mesh = new THREE.Mesh(armGeo, armMat);
+    const mesh = new THREE.Mesh(armGeo, skinMat);
     mesh.position.y = -0.08;
     pivot.add(mesh);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), skinMat);
+    hand.position.y = -0.16;
+    pivot.add(hand);
     pivot.position.set(xOff, shoulderY, 0);
     return pivot;
   }
@@ -525,12 +595,16 @@ function buildPerson(seed) {
   tool.visible = false;
   armR.add(tool);
 
-  const headMesh = new THREE.Mesh(
-    new THREE.SphereGeometry(0.07, 10, 10),
-    new THREE.MeshStandardMaterial({ color: skin, roughness: 0.6 })
-  );
+  const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), skinMat);
   headMesh.position.y = shoulderY + 0.12;
   group.add(headMesh);
+
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x1c140c, roughness: 0.5 });
+  for (const xOff of [-0.026, 0.026]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.009, 6, 6), eyeMat);
+    eye.position.set(xOff, headMesh.position.y + 0.005, 0.064);
+    group.add(eye);
+  }
 
   const hairMesh = new THREE.Mesh(
     new THREE.SphereGeometry(0.074, 10, 10, 0, Math.PI * 2, 0, Math.PI * 0.55),
@@ -538,6 +612,15 @@ function buildPerson(seed) {
   );
   hairMesh.position.y = headMesh.position.y + 0.012;
   group.add(hairMesh);
+
+  if (hasBeard) {
+    const beard = new THREE.Mesh(
+      new THREE.SphereGeometry(0.045, 8, 8, 0, Math.PI * 2, Math.PI * 0.35, Math.PI * 0.4),
+      new THREE.MeshStandardMaterial({ color: hair, roughness: 0.85 })
+    );
+    beard.position.set(0, headMesh.position.y - 0.025, 0.045);
+    group.add(beard);
+  }
 
   group.userData.legL = legL;
   group.userData.legR = legR;
@@ -555,24 +638,32 @@ function buildKeep() {
   const stoneMat = new THREE.MeshStandardMaterial({ color: 0x9a8f7a, roughness: 0.85, flatShading: true });
   const roofMat = new THREE.MeshStandardMaterial({ color: 0x4a3f33, roughness: 0.85, flatShading: true });
 
+  const plinth = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.85, 0.92, 0.08, 12),
+    new THREE.MeshStandardMaterial({ color: 0x6b5d4a, roughness: 0.95, flatShading: true })
+  );
+  plinth.position.y = 0.04;
+  group.add(plinth);
+
+  const base = 0.08;
   const keep = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 1.3, 8), stoneMat);
-  keep.position.y = 0.65;
+  keep.position.y = 0.65 + base;
   group.add(keep);
   const roof = new THREE.Mesh(new THREE.ConeGeometry(0.62, 0.6, 8), roofMat);
-  roof.position.y = 1.3 + 0.3;
+  roof.position.y = 1.3 + 0.3 + base;
   group.add(roof);
 
   for (const a of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
     const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 1.0, 6), stoneMat);
-    turret.position.set(Math.cos(a) * 0.6, 0.5, Math.sin(a) * 0.6);
+    turret.position.set(Math.cos(a) * 0.6, 0.5 + base, Math.sin(a) * 0.6);
     group.add(turret);
     const turretRoof = new THREE.Mesh(new THREE.ConeGeometry(0.19, 0.28, 6), roofMat);
-    turretRoof.position.set(Math.cos(a) * 0.6, 1.0 + 0.14, Math.sin(a) * 0.6);
+    turretRoof.position.set(Math.cos(a) * 0.6, 1.0 + 0.14 + base, Math.sin(a) * 0.6);
     group.add(turretRoof);
   }
 
   const flagPole = makeFlag(0, 0.5, 0.02);
-  flagPole.position.y = 1.3 + 0.6;
+  flagPole.position.y = 1.3 + 0.6 + base;
   group.add(flagPole);
   group.userData.flag = flagPole.userData.flagPivot;
 
@@ -593,6 +684,54 @@ const tilesGroup = new THREE.Group();
 islandGroup.add(tilesGroup);
 const decorGroup = new THREE.Group();
 islandGroup.add(decorGroup);
+const roadGroup = new THREE.Group();
+islandGroup.add(roadGroup);
+
+// ---- dirt road ribbons, hub-and-spoke from the Keep ----------------------
+function buildRoadSegment(from, to) {
+  const dist = Math.hypot(to.x - from.x, to.z - from.z);
+  const segments = Math.max(4, Math.round(dist * 6));
+  const w = 0.11;
+  const pts = [];
+  for (let i = 0; i <= segments; i++) {
+    const tt = i / segments;
+    const x = from.x + (to.x - from.x) * tt;
+    const z = from.z + (to.z - from.z) * tt;
+    pts.push(new THREE.Vector3(x, raycastHeight(islandMesh, x, z) + 0.025, z));
+  }
+  const positions = [];
+  for (let i = 0; i < pts.length; i++) {
+    const prev = pts[Math.max(0, i - 1)];
+    const next = pts[Math.min(pts.length - 1, i + 1)];
+    const dir = next.clone().sub(prev);
+    if (dir.lengthSq() < 1e-8) dir.set(1, 0, 0);
+    dir.normalize();
+    const perp = new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(w / 2);
+    const p = pts[i];
+    positions.push(p.x - perp.x, p.y, p.z - perp.z, p.x + perp.x, p.y, p.z + perp.z);
+  }
+  const idx = [];
+  for (let i = 0; i < segments; i++) {
+    const a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
+    idx.push(a, b, c, b, d, c);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, roadMat);
+  mesh.receiveShadow = true;
+  return mesh;
+}
+const roadMat = new THREE.MeshStandardMaterial({ color: 0x8a7355, roughness: 0.98 });
+
+function buildRoads(spots) {
+  roadGroup.clear();
+  const hub = spots[0];
+  for (let i = 1; i < spots.length; i++) {
+    roadGroup.add(buildRoadSegment(hub, spots[i]));
+  }
+}
 
 // ---- scene graph for projects -------------------------------------------
 const tiles = new Map(); // path -> { group, building, person, walkPhase, hitMesh, project }
@@ -615,26 +754,42 @@ function placeTile(key, index, totalGuess, isAddSlot, project) {
 
   let hitMesh;
   if (isAddSlot) {
+    const padBase = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.26, 0.29, 0.05, 10),
+      new THREE.MeshStandardMaterial({ color: 0x6b5d4a, roughness: 0.95, flatShading: true })
+    );
+    padBase.position.y = 0.025;
+    padBase.receiveShadow = true;
+    group.add(padBase);
     // stone waypost with a warm carved-rune glow
     const post = new THREE.Mesh(
       new THREE.CylinderGeometry(0.05, 0.06, 0.5, 6),
       new THREE.MeshStandardMaterial({ color: 0x6b5a3e, roughness: 0.9 })
     );
-    post.position.y = 0.25;
+    post.position.y = 0.28;
     group.add(post);
     const sign = new THREE.Mesh(
       new THREE.BoxGeometry(0.32, 0.22, 0.04),
       new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.8, emissive: 0xff9a3c, emissiveIntensity: 0.25 })
     );
-    sign.position.y = 0.45;
+    sign.position.y = 0.48;
     group.add(sign);
     hitMesh = post;
   } else {
+    const plinth = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.42, 0.47, 0.06, 10),
+      new THREE.MeshStandardMaterial({ color: 0x6b5d4a, roughness: 0.95, flatShading: true })
+    );
+    plinth.position.y = 0.03;
+    plinth.receiveShadow = true;
+    group.add(plinth);
+
     const seed = seedFrom(project.name);
     const building = buildBuilding(seed);
+    building.position.y = 0.06;
     group.add(building);
     const person = buildPerson(seed >>> 3);
-    person.position.set(0.5, 0, 0.3);
+    person.position.set(0.5, 0.06, 0.3);
     group.add(person);
 
     const torch = new THREE.PointLight(0xff9a3c, 0, 2.2);
@@ -659,13 +814,30 @@ function rebuildScene() {
   clickables.length = 0;
   clickables.push(keepGroup.children[0]);
 
+  // Reset to pristine terrain, then flatten a pad at every current
+  // building/keep/waypost position before anything gets placed.
+  resetTerrain();
   const total = projects.length + 1;
-  projects.forEach((project, i) => {
-    const hit = placeTile(project.path, i, total, false, project);
+  const spots = [{ x: 0, z: 0, radius: 0.9, y: raycastHeight(islandMesh, 0, 0) }];
+  const projectPts = projects.map((project, i) => {
+    const { x, z } = scatterPoint(i, total);
+    return { project, x, z };
+  });
+  for (const p of projectPts) {
+    spots.push({ x: p.x, z: p.z, radius: 0.55, y: raycastHeight(islandMesh, p.x, p.z) });
+  }
+  const addPt = scatterPoint(projects.length, total);
+  spots.push({ x: addPt.x, z: addPt.z, radius: 0.35, y: raycastHeight(islandMesh, addPt.x, addPt.z) });
+  flattenSpots(spots);
+
+  projectPts.forEach((p, i) => {
+    const hit = placeTile(p.project.path, i, total, false, p.project);
     clickables.push(hit);
   });
   const addHit = placeTile(ADD_SLOT_KEY, projects.length, total, true, null);
   clickables.push(addHit);
+
+  buildRoads(spots);
 }
 
 // ---- natural decoration: random rejection-sampled trees & bushes --------
