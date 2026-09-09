@@ -184,6 +184,8 @@ function heightNoise(nx, ny, nz) {
   );
 }
 
+const waterMeshes = []; // { mesh, baseY, phase } — gently bobbed each frame
+
 function buildIsland() {
   const group = new THREE.Group();
   const geo = new THREE.IcosahedronGeometry(ISLAND_RADIUS, 5);
@@ -251,15 +253,50 @@ function buildIsland() {
   mesh.castShadow = true;
   group.add(mesh);
 
-  for (const lake of LAKES) {
+  for (let li = 0; li < LAKES.length; li++) {
+    const lake = LAKES[li];
     const y = raycastHeight(mesh, lake.x, lake.z) - 0.1;
+    lake.waterY = y;
+
+    // Jittered-radius fan instead of a perfect circle, so the shoreline
+    // reads as natural rather than a stamped-out disc. A per-lake seed
+    // keeps the wobble stable across rebuilds.
+    const jitterSeed = li * 91.7 + 12.3;
+    const segs = 28;
+    const deep = new THREE.Color(0x1f4258);
+    const shallow = new THREE.Color(0x4f9cc4);
+    const positions = [0, y, 0];
+    const colors = [deep.r, deep.g, deep.b];
+    for (let i = 0; i <= segs; i++) {
+      const a = (i / segs) * Math.PI * 2;
+      const wobble = 1 + Math.sin(a * 3 + jitterSeed) * 0.08 + Math.sin(a * 7 + jitterSeed * 2) * 0.04;
+      const r = lake.radius * 0.82 * wobble;
+      positions.push(Math.cos(a) * r, y, Math.sin(a) * r);
+      colors.push(shallow.r, shallow.g, shallow.b);
+    }
+    const waterGeo = new THREE.BufferGeometry();
+    waterGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    waterGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
+    const idx = [];
+    for (let i = 1; i <= segs; i++) idx.push(0, i, i + 1);
+    waterGeo.setIndex(idx);
+    waterGeo.computeVertexNormals();
     const waterMat = new THREE.MeshStandardMaterial({
-      color: 0x3d7ea6, transparent: true, opacity: 0.78, roughness: 0.12, metalness: 0.15,
+      vertexColors: true, transparent: true, opacity: 0.85, roughness: 0.1, metalness: 0.2,
     });
-    const surface = new THREE.Mesh(new THREE.CircleGeometry(lake.radius * 0.8, 24), waterMat);
-    surface.rotation.x = -Math.PI / 2;
-    surface.position.set(lake.x, y, lake.z);
+    const surface = new THREE.Mesh(waterGeo, waterMat);
+    surface.position.set(lake.x, 0, lake.z);
     group.add(surface);
+    waterMeshes.push({ mesh: surface, baseY: y, phase: li * 1.7 });
+
+    // pale foam ring right at the shoreline
+    const foam = new THREE.Mesh(
+      new THREE.RingGeometry(lake.radius * 0.78, lake.radius * 0.85, segs),
+      new THREE.MeshStandardMaterial({ color: 0xdff2f5, transparent: true, opacity: 0.35, roughness: 0.6 })
+    );
+    foam.rotation.x = -Math.PI / 2;
+    foam.position.set(lake.x, y + 0.008, lake.z);
+    group.add(foam);
   }
 
   const glow = new THREE.Mesh(
@@ -632,6 +669,102 @@ function buildWindmill(seed) {
 }
 const windmills = [];
 const cozyBuildings = [];
+const lanterns = [];
+
+// ---- unique dock per lake -------------------------------------------------
+function buildRowboat() {
+  const group = new THREE.Group();
+  const hullMat = new THREE.MeshStandardMaterial({ color: 0x7d5a3a, roughness: 0.8, flatShading: true });
+  const hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.28, 4, 8), hullMat);
+  hull.rotation.z = Math.PI / 2;
+  hull.scale.set(1, 1, 0.6);
+  hull.position.y = 0.03;
+  group.add(hull);
+  const seatMat = new THREE.MeshStandardMaterial({ color: 0x5b3d26, roughness: 0.85 });
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.02, 0.08), seatMat);
+  seat.position.y = 0.07;
+  group.add(seat);
+  return group;
+}
+
+function buildDock(lake, index) {
+  const group = new THREE.Group();
+  const variant = index % 3;
+  const angle = index * 2.35 + 0.6;
+  const dir = { x: Math.cos(angle), z: Math.sin(angle) };
+  const perpDir = { x: -dir.z, z: dir.x };
+  const deckY = lake.waterY + 0.05;
+  const plankMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.85, flatShading: true });
+  const postMat = new THREE.MeshStandardMaterial({ color: 0x4b3320, roughness: 0.9 });
+
+  function addWalkway(fromPt, toPt, width) {
+    const segDir = new THREE.Vector3().subVectors(toPt, fromPt);
+    const segLen = segDir.length();
+    segDir.normalize();
+    const mid = fromPt.clone().add(toPt).multiplyScalar(0.5);
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.05, width), plankMat);
+    plank.position.set(mid.x, deckY, mid.z);
+    plank.rotation.y = -Math.atan2(segDir.z, segDir.x);
+    group.add(plank);
+
+    const postCount = Math.max(2, Math.round(segLen / 0.5) + 1);
+    for (let i = 0; i < postCount; i++) {
+      const t = i / (postCount - 1);
+      const p = fromPt.clone().lerp(toPt, t);
+      for (const side of [-1, 1]) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.5, 6), postMat);
+        post.position.set(p.x - segDir.z * side * width * 0.42, deckY - 0.22, p.z + segDir.x * side * width * 0.42);
+        group.add(post);
+      }
+    }
+  }
+
+  const startR = lake.radius * 0.95;
+  const startPt = new THREE.Vector3(lake.x + dir.x * startR, deckY, lake.z + dir.z * startR);
+
+  if (variant === 0) {
+    // short straight dock with a lantern at the end
+    const endPt = new THREE.Vector3(lake.x + dir.x * lake.radius * 0.4, deckY, lake.z + dir.z * lake.radius * 0.4);
+    addWalkway(startPt, endPt, 0.32);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.4, 6), postMat);
+    pole.position.set(endPt.x, deckY + 0.2, endPt.z);
+    group.add(pole);
+    const lanternMat = new THREE.MeshStandardMaterial({ color: 0xffcf8a, emissive: 0xff9a3c, emissiveIntensity: 0.3, roughness: 0.5 });
+    const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8), lanternMat);
+    lantern.position.set(endPt.x, deckY + 0.42, endPt.z);
+    group.add(lantern);
+    group.userData.lantern = lanternMat;
+  } else if (variant === 1) {
+    // L-shaped dock ending in a small crate platform
+    const midPt = startPt.clone().lerp(new THREE.Vector3(lake.x, deckY, lake.z), 0.55);
+    addWalkway(startPt, midPt, 0.34);
+    const branchEnd = midPt.clone().add(new THREE.Vector3(perpDir.x, 0, perpDir.z).multiplyScalar(0.65));
+    addWalkway(midPt, branchEnd, 0.34);
+    const crateMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3f, roughness: 0.85, flatShading: true });
+    for (let i = 0; i < 2; i++) {
+      const crate = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.13, 0.13), crateMat);
+      crate.position.set(branchEnd.x + i * 0.02, deckY + 0.09 + i * 0.13, branchEnd.z - i * 0.02);
+      crate.rotation.y = i * 0.5;
+      group.add(crate);
+    }
+  } else {
+    // longer dock with mooring posts and a tied-up rowboat
+    const endPt = new THREE.Vector3(lake.x + dir.x * lake.radius * 0.15, deckY, lake.z + dir.z * lake.radius * 0.15);
+    addWalkway(startPt, endPt, 0.4);
+    for (const side of [-1, 1]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.35, 6), postMat);
+      post.position.set(endPt.x + perpDir.x * side * 0.28, deckY + 0.05, endPt.z + perpDir.z * side * 0.28);
+      group.add(post);
+    }
+    const boat = buildRowboat();
+    boat.position.set(endPt.x + perpDir.x * 0.55, lake.waterY + 0.03, endPt.z + perpDir.z * 0.55);
+    boat.rotation.y = angle;
+    group.add(boat);
+  }
+
+  group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return group;
+}
 
 // ---- trees & bushes ---------------------------------------------------
 function buildTree(seed) {
@@ -1108,7 +1241,7 @@ function generateDecor() {
     return occupied.some((o) => Math.hypot(x - o.x, z - o.z) < Math.max(minDist, o.r));
   }
 
-  function scatterRandom(count, build, minDist, onPlace) {
+  function scatterRandom(count, build, minDist, onPlace, flattenRadius) {
     let placed = 0;
     let attempts = 0;
     while (placed < count && attempts < count * 25) {
@@ -1120,6 +1253,11 @@ function generateDecor() {
       if (tooClose(x, z, minDist)) continue;
       const surface = surfacePointAt(x, z);
       if (!surface || surface.y < -1.6) continue;
+      if (flattenRadius) {
+        // Rigid structures (unlike trees/bushes) need a flat pad or they
+        // float/clip like the buildings used to — same fix as tiles.
+        flattenSpots([{ x, z, radius: flattenRadius, y: surface.y }]);
+      }
       const seed = Math.floor(Math.random() * 1e6);
       const obj = build(seed);
       obj.position.copy(surface);
@@ -1137,14 +1275,20 @@ function generateDecor() {
   // impossible to find within a handful of attempts and the landmark
   // silently fails to place. Pure atmosphere: no click handler, no tie to
   // any project.
-  scatterRandom(1, buildTavern, 1.6, (obj) => cozyBuildings.push(obj));
-  scatterRandom(2, buildWell, 0.9);
-  scatterRandom(1, buildWindmill, 1.4, (obj) => windmills.push(obj));
+  scatterRandom(1, buildTavern, 1.6, (obj) => cozyBuildings.push(obj), 1.1);
+  scatterRandom(2, buildWell, 0.9, null, 0.55);
+  scatterRandom(1, buildWindmill, 1.4, (obj) => windmills.push(obj), 0.75);
 
   scatterRandom(48, buildTree, 0.5);
   scatterRandom(34, buildBush, 0.3);
   scatterRandom(20, buildRock, 0.4);
   scatterRandom(24, buildFlowerPatch, 0.25);
+
+  for (let li = 0; li < LAKES.length; li++) {
+    const dock = buildDock(LAKES[li], li);
+    decorGroup.add(dock);
+    if (dock.userData.lantern) lanterns.push(dock.userData.lantern);
+  }
 }
 
 // ---- a few birds circling the island for ambience ------------------------
@@ -1489,6 +1633,12 @@ function animate() {
   for (const cozy of cozyBuildings) {
     const mat = cozy.userData.windowMat;
     if (mat) mat.emissiveIntensity = 0.15 + nightFactor * (0.55 + Math.sin(t * 3) * 0.1);
+  }
+  for (const lantern of lanterns) {
+    lantern.emissiveIntensity = 0.2 + nightFactor * (0.7 + Math.sin(t * 4) * 0.15);
+  }
+  for (const w of waterMeshes) {
+    w.mesh.position.y = 0.01 * Math.sin(t * 0.8 + w.phase);
   }
 
   updateCameraTween();
