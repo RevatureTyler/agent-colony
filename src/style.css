@@ -32,90 +32,26 @@ header h1 {
 }
 #addBtn:hover { background: #5470ff; }
 
-.hex-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  padding: 40px;
-  justify-content: center;
-}
-
-.hex-tile {
+#scene-wrap {
   position: relative;
-  width: 160px;
-  height: 184px;
-  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
-  background: linear-gradient(160deg, #24304a, #16202f);
-  border: 2px solid #33456b;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  width: 100%;
+  height: calc(100vh - 61px);
+  overflow: hidden;
+}
+
+#scene {
+  display: block;
+  width: 100%;
+  height: 100%;
   cursor: pointer;
-  transition: transform 0.15s ease, border-color 0.15s ease;
-  padding: 20px 14px;
-  text-align: center;
 }
-
-.hex-tile:hover {
-  transform: translateY(-6px) scale(1.03);
-  border-color: #5470ff;
-}
-
-.hex-tile.active {
-  border-color: #33d17a;
-  box-shadow: 0 0 24px rgba(51, 209, 122, 0.35);
-}
-
-.tile-face {
-  font-size: 34px;
-  margin-bottom: 8px;
-}
-
-.tile-name {
-  font-size: 13px;
-  font-weight: 600;
-  word-break: break-word;
-}
-
-.tile-status {
-  font-size: 11px;
-  margin-top: 6px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: #2a3550;
-  color: #9fb0d0;
-}
-
-.hex-tile.active .tile-status {
-  background: #1c4a30;
-  color: #6ee89f;
-}
-
-.remove-btn {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  background: transparent;
-  border: none;
-  color: #6c7a99;
-  font-size: 14px;
-  cursor: pointer;
-  z-index: 2;
-}
-.remove-btn:hover { color: #ff6b6b; }
 
 .empty-msg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   text-align: center;
   color: #6c7a99;
-  margin-top: 60px;
-}
-
-.add-tile {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-style: dashed;
-  color: #6c7a99;
-  font-size: 28px;
+  pointer-events: none;
 }
