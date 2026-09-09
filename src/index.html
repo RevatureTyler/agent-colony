@@ -14,14 +14,25 @@
     <span id="buildingCount" class="building-count" hidden></span>
     <button id="addBtn">+ Add project</button>
   </header>
-  <main id="scene-wrap"></main>
+  <main id="scene-wrap">
+    <div id="labels"></div>
+  </main>
   <aside id="sidebar">
     <h2>Realm Log</h2>
     <ul id="threadList"></ul>
   </aside>
   <div id="toasts"></div>
+  <div id="actionPanel" class="action-panel" hidden>
+    <div class="action-panel-title" id="apTitle"></div>
+    <div class="action-panel-status" id="apStatus"></div>
+    <div class="action-panel-buttons">
+      <button id="apLaunch" class="ap-btn ap-primary">Enter</button>
+      <button id="apRemove" class="ap-btn ap-danger">Abandon</button>
+      <button id="apCancel" class="ap-btn">Close</button>
+    </div>
+  </div>
   <p id="empty" class="empty-msg" hidden>No projects yet — click "Add project" to register a folder.</p>
-  <p id="hint" class="hint-msg">Scroll to zoom · drag to orbit · click a building to open · right-click to remove</p>
+  <p id="hint" class="hint-msg">Scroll to zoom · drag to orbit · click a building to select</p>
   <script type="module" src="renderer.js"></script>
 </body>
 </html>

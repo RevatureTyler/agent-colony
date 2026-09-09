@@ -18,6 +18,13 @@ const emptyMsg = document.getElementById('empty');
 const sidebarList = document.getElementById('threadList');
 const toastHost = document.getElementById('toasts');
 const buildingCountEl = document.getElementById('buildingCount');
+const labelHost = document.getElementById('labels');
+const actionPanel = document.getElementById('actionPanel');
+const apTitle = document.getElementById('apTitle');
+const apStatus = document.getElementById('apStatus');
+const apLaunch = document.getElementById('apLaunch');
+const apRemove = document.getElementById('apRemove');
+const apCancel = document.getElementById('apCancel');
 
 const ISLAND_RADIUS = 6;
 const LAKES = [
@@ -133,8 +140,10 @@ function applyDayCycle() {
   sun.position.set(Math.cos(rad) * dist, Math.max(Math.sin(rad) * dist, -3), dist * 0.4);
 
   if (starPoints) starPoints.material.opacity = s.star;
+  nightFactor = s.star;
   return s;
 }
+let nightFactor = 0;
 
 // ---- starfield (fades in at night) --------------------------------------
 let starPoints;
@@ -539,6 +548,52 @@ function buildPerson(seed) {
   return group;
 }
 
+// ---- the Great Keep: a fixed landmark at the island's heart --------------
+const KEEP_KEY = '__keep__';
+function buildKeep() {
+  const group = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x9a8f7a, roughness: 0.85, flatShading: true });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x4a3f33, roughness: 0.85, flatShading: true });
+
+  const keep = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 1.3, 8), stoneMat);
+  keep.position.y = 0.65;
+  group.add(keep);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(0.62, 0.6, 8), roofMat);
+  roof.position.y = 1.3 + 0.3;
+  group.add(roof);
+
+  for (const a of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
+    const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 1.0, 6), stoneMat);
+    turret.position.set(Math.cos(a) * 0.6, 0.5, Math.sin(a) * 0.6);
+    group.add(turret);
+    const turretRoof = new THREE.Mesh(new THREE.ConeGeometry(0.19, 0.28, 6), roofMat);
+    turretRoof.position.set(Math.cos(a) * 0.6, 1.0 + 0.14, Math.sin(a) * 0.6);
+    group.add(turretRoof);
+  }
+
+  const flagPole = makeFlag(0, 0.5, 0.02);
+  flagPole.position.y = 1.3 + 0.6;
+  group.add(flagPole);
+  group.userData.flag = flagPole.userData.flagPivot;
+
+  group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return group;
+}
+
+const keepGroup = buildKeep();
+const keepSurface = surfacePointAt(0, 0) || new THREE.Vector3(0, 0, 0);
+keepGroup.position.copy(keepSurface);
+islandGroup.add(keepGroup);
+keepGroup.children[0].userData.tileKey = KEEP_KEY; // the main cylinder is the hit target
+
+// Dedicated sub-groups so rebuilding tiles never touches decoration (or
+// vice versa) — previously both lived as flat siblings and a rebuild would
+// wipe out every tree/bush the first time a project's status changed.
+const tilesGroup = new THREE.Group();
+islandGroup.add(tilesGroup);
+const decorGroup = new THREE.Group();
+islandGroup.add(decorGroup);
+
 // ---- scene graph for projects -------------------------------------------
 const tiles = new Map(); // path -> { group, building, person, walkPhase, hitMesh, project }
 const ADD_SLOT_KEY = '__add__';
@@ -546,7 +601,7 @@ const ADD_SLOT_KEY = '__add__';
 function clearTile(path) {
   const tile = tiles.get(path);
   if (!tile) return;
-  islandGroup.remove(tile.group);
+  tilesGroup.remove(tile.group);
   tiles.delete(path);
 }
 
@@ -556,7 +611,7 @@ function placeTile(key, index, totalGuess, isAddSlot, project) {
 
   const group = new THREE.Group();
   group.position.copy(surface);
-  islandGroup.add(group);
+  tilesGroup.add(group);
 
   let hitMesh;
   if (isAddSlot) {
@@ -582,8 +637,12 @@ function placeTile(key, index, totalGuess, isAddSlot, project) {
     person.position.set(0.5, 0, 0.3);
     group.add(person);
 
+    const torch = new THREE.PointLight(0xff9a3c, 0, 2.2);
+    torch.position.set(0, (building.userData.height || 1) * 0.4, 0.3);
+    group.add(torch);
+
     hitMesh = building.children[0];
-    tiles.set(key, { group, building, person, walkPhase: Math.random() * Math.PI * 2, hitMesh, project });
+    tiles.set(key, { group, building, person, torch, walkPhase: Math.random() * Math.PI * 2, hitMesh, project });
   }
 
   hitMesh.userData.tileKey = key;
@@ -597,10 +656,8 @@ const lastChange = new Map(); // path -> timestamp, for the sidebar's relative t
 
 function rebuildScene() {
   for (const [key] of tiles) clearTile(key);
-  while (islandGroup.children.length > 2 + LAKES.length) {
-    islandGroup.remove(islandGroup.children[islandGroup.children.length - 1]);
-  }
   clickables.length = 0;
+  clickables.push(keepGroup.children[0]);
 
   const total = projects.length + 1;
   projects.forEach((project, i) => {
@@ -642,7 +699,7 @@ function generateDecor() {
       const obj = build(seed);
       obj.position.copy(surface);
       obj.rotation.y = Math.random() * Math.PI * 2;
-      islandGroup.add(obj);
+      decorGroup.add(obj);
       occupied.push({ x, z, r: minDist });
       placed++;
     }
@@ -650,6 +707,32 @@ function generateDecor() {
 
   scatterRandom(22, buildTree, 0.5);
   scatterRandom(16, buildBush, 0.3);
+}
+
+// ---- a few birds circling the island for ambience ------------------------
+const birds = [];
+function buildBird() {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: 0x2b2620, side: THREE.DoubleSide });
+  const wingL = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.05), mat);
+  wingL.position.x = -0.06;
+  const wingR = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.05), mat);
+  wingR.position.x = 0.06;
+  group.add(wingL, wingR);
+  group.userData.wingL = wingL;
+  group.userData.wingR = wingR;
+  return group;
+}
+for (let i = 0; i < 5; i++) {
+  const bird = buildBird();
+  scene.add(bird);
+  birds.push({
+    obj: bird,
+    radius: ISLAND_RADIUS * (0.6 + Math.random() * 0.5),
+    height: 3.5 + Math.random() * 1.5,
+    speed: 0.15 + Math.random() * 0.1,
+    phase: Math.random() * Math.PI * 2,
+  });
 }
 
 // ---- realm log sidebar + toasts ------------------------------------------
@@ -702,9 +785,131 @@ function showToast(text) {
   }, 3800);
 }
 
+// ---- selection ring + camera focus ---------------------------------------
+const selectionRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.55, 0.62, 32),
+  new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+);
+selectionRing.rotation.x = -Math.PI / 2;
+selectionRing.visible = false;
+islandGroup.add(selectionRing);
+
+let selectedKey = null;
+let cameraTween = null;
+
+function focusCameraOn(worldPos, radius) {
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  const dist = Math.max(radius * 3.2, 3.2);
+  cameraTween = {
+    startPos: camera.position.clone(),
+    startTarget: controls.target.clone(),
+    endPos: worldPos.clone().addScaledVector(dir, dist).add(new THREE.Vector3(0, radius * 0.6, 0)),
+    endTarget: worldPos.clone().add(new THREE.Vector3(0, radius * 0.5, 0)),
+    t0: performance.now(),
+    duration: 650,
+  };
+}
+
+function updateCameraTween() {
+  if (!cameraTween) return;
+  const t = Math.min(1, (performance.now() - cameraTween.t0) / cameraTween.duration);
+  const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  camera.position.lerpVectors(cameraTween.startPos, cameraTween.endPos, eased);
+  controls.target.lerpVectors(cameraTween.startTarget, cameraTween.endTarget, eased);
+  if (t >= 1) cameraTween = null;
+}
+
+function selectTile(key) {
+  selectedKey = key;
+  if (!key) {
+    actionPanel.hidden = true;
+    selectionRing.visible = false;
+    renderLabels();
+    return;
+  }
+
+  if (key === KEEP_KEY) {
+    const building = projects.filter((p) => p.active).length;
+    selectionRing.position.set(keepGroup.position.x, keepGroup.position.y + 0.02, keepGroup.position.z);
+    selectionRing.visible = true;
+    apTitle.textContent = 'The Great Keep';
+    apStatus.textContent = `${projects.length} realm${projects.length === 1 ? '' : 's'} · ${building} building`;
+    apLaunch.hidden = true;
+    apRemove.hidden = true;
+    actionPanel.hidden = false;
+    focusCameraOn(keepGroup.position, 1.3);
+    renderLabels();
+    return;
+  }
+
+  const tile = tiles.get(key);
+  if (!tile) return;
+  selectionRing.position.set(tile.group.position.x, tile.group.position.y + 0.02, tile.group.position.z);
+  selectionRing.visible = true;
+  apTitle.textContent = tile.project.name;
+  apStatus.textContent = tile.project.active ? 'A villager is building here' : 'Idle';
+  apLaunch.hidden = false;
+  apRemove.hidden = false;
+  actionPanel.hidden = false;
+  focusCameraOn(tile.group.position, 0.7);
+  renderLabels();
+}
+
+apLaunch.addEventListener('click', () => {
+  if (selectedKey && selectedKey !== KEEP_KEY) window.agentColony.launchAgent(selectedKey);
+});
+apRemove.addEventListener('click', async () => {
+  const tile = tiles.get(selectedKey);
+  if (tile && confirm(`Abandon "${tile.project.name}"? It stays removed from the realm only — your files are untouched.`)) {
+    await window.agentColony.removeProject(selectedKey);
+    selectTile(null);
+    refreshProjects();
+  }
+});
+apCancel.addEventListener('click', () => selectTile(null));
+window.addEventListener('keydown', (evt) => { if (evt.key === 'Escape') selectTile(null); });
+
+// ---- nameplate labels (HTML overlay tracking 3D positions) --------------
+const labelEls = new Map(); // key -> div
+function renderLabels() {
+  const seen = new Set();
+  const addLabel = (key, name, worldPos, height) => {
+    seen.add(key);
+    let el = labelEls.get(key);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'building-label';
+      labelHost.appendChild(el);
+      labelEls.set(key, el);
+    }
+    const p = worldPos.clone();
+    p.y += height + 0.18;
+    p.project(camera);
+    if (p.z > 1) { el.classList.add('dim'); return; }
+    const x = (p.x * 0.5 + 0.5) * wrap.clientWidth;
+    const y = (-p.y * 0.5 + 0.5) * wrap.clientHeight;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    el.textContent = name;
+    el.classList.remove('dim');
+    el.classList.toggle('selected', selectedKey === key);
+    el.classList.toggle('hovered', hoveredKey === key);
+  };
+
+  for (const [key, tile] of tiles) {
+    addLabel(key, tile.project.name, tile.group.position, (tile.building.userData.height || 1) + 0.1);
+  }
+  addLabel(KEEP_KEY, 'The Great Keep', keepGroup.position, 1.9);
+
+  for (const [key, el] of labelEls) {
+    if (!seen.has(key)) { el.remove(); labelEls.delete(key); }
+  }
+}
+
 // ---- interaction ----------------------------------------------------
 const pointer = new THREE.Vector2();
 let downPos = null;
+let hoveredKey = null;
 
 function updatePointer(evt) {
   const rect = renderer.domElement.getBoundingClientRect();
@@ -722,32 +927,25 @@ renderer.domElement.addEventListener('pointerdown', (evt) => {
   downPos = { x: evt.clientX, y: evt.clientY };
 });
 
-renderer.domElement.addEventListener('pointerup', async (evt) => {
+renderer.domElement.addEventListener('pointerup', (evt) => {
   if (!downPos) return;
   const moved = Math.hypot(evt.clientX - downPos.x, evt.clientY - downPos.y);
   downPos = null;
   if (moved > 6) return;
+  if (evt.button === 2) return;
 
   updatePointer(evt);
   const key = pickTileKey();
-  if (!key) return;
 
-  if (evt.button === 2) {
-    if (key === ADD_SLOT_KEY) return;
-    const tile = tiles.get(key);
-    if (tile && confirm(`Remove "${tile.project.name}" from the realm?`)) {
-      await window.agentColony.removeProject(key);
-      refreshProjects();
-    }
+  if (!key) {
+    selectTile(null);
     return;
   }
-
   if (key === ADD_SLOT_KEY) {
-    await window.agentColony.addProject();
-    refreshProjects();
-  } else {
-    window.agentColony.launchAgent(key);
+    window.agentColony.addProject().then(refreshProjects);
+    return;
   }
+  selectTile(key);
 });
 
 renderer.domElement.addEventListener('contextmenu', (evt) => evt.preventDefault());
@@ -755,6 +953,7 @@ renderer.domElement.addEventListener('contextmenu', (evt) => evt.preventDefault(
 renderer.domElement.addEventListener('pointermove', (evt) => {
   updatePointer(evt);
   const key = pickTileKey();
+  hoveredKey = key;
   renderer.domElement.style.cursor = key ? 'pointer' : 'grab';
 });
 
@@ -803,6 +1002,7 @@ function animate() {
     const mat = tile.building.userData.windowMat;
     mat.emissive.set(active ? HEARTH_GLOW : 0x000000);
     mat.emissiveIntensity = active ? 0.9 + Math.sin(t * 3) * 0.1 : 0;
+    tile.torch.intensity = nightFactor * (active ? 0.55 : 0.3) * (0.85 + Math.sin(t * 5 + tile.walkPhase) * 0.15);
 
     const flag = tile.building.userData.flag;
     if (flag) flag.rotation.y = Math.sin(t * 2.4 + tile.walkPhase) * 0.35;
@@ -831,6 +1031,19 @@ function animate() {
     }
   }
 
+  if (keepGroup.userData.flag) keepGroup.userData.flag.rotation.y = Math.sin(t * 2) * 0.3;
+
+  for (const b of birds) {
+    const angle = t * b.speed + b.phase;
+    b.obj.position.set(Math.cos(angle) * b.radius, b.height + Math.sin(t * 0.5 + b.phase) * 0.3, Math.sin(angle) * b.radius);
+    b.obj.rotation.y = -angle + Math.PI / 2;
+    const flap = Math.sin(t * 10 + b.phase) * 0.7;
+    b.obj.userData.wingL.rotation.z = flap;
+    b.obj.userData.wingR.rotation.z = -flap;
+  }
+
+  updateCameraTween();
+  renderLabels();
   controls.update();
   renderer.render(scene, camera);
 }

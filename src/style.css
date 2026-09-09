@@ -52,6 +52,84 @@ header h1 {
   overflow: hidden;
 }
 
+#labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.building-label {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  font-size: 11px;
+  color: #ead9b8;
+  background: rgba(20, 15, 9, 0.55);
+  border: 1px solid rgba(139, 90, 43, 0.5);
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  opacity: 0.75;
+  transition: opacity 0.15s, background 0.15s;
+}
+.building-label.hovered,
+.building-label.selected {
+  opacity: 1;
+  background: rgba(139, 90, 43, 0.55);
+  border-color: #ffb347;
+}
+.building-label.dim { opacity: 0; }
+
+.action-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 60px;
+  transform: translateX(-50%);
+  background: rgba(20, 15, 9, 0.92);
+  border: 1px solid #6b4a24;
+  border-radius: 10px;
+  padding: 14px 18px;
+  min-width: 260px;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 6;
+}
+
+.action-panel-title {
+  font-size: 15px;
+  font-weight: bold;
+  color: #f2c879;
+  margin-bottom: 2px;
+}
+
+.action-panel-status {
+  font-size: 12px;
+  color: #b89860;
+  margin-bottom: 10px;
+}
+
+.action-panel-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.ap-btn {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid #5c3d1c;
+  background: #2a2013;
+  color: #ead9b8;
+  cursor: pointer;
+}
+.ap-btn:hover { background: #3a2c19; }
+.ap-primary { background: #8b5a2b; color: #fff3d9; border-color: #a3702f; }
+.ap-primary:hover { background: #a3702f; }
+.ap-danger { color: #ff8a7a; border-color: #6b2a20; }
+.ap-danger:hover { background: #3a1a15; }
+
 #sidebar {
   position: absolute;
   top: 77px;
