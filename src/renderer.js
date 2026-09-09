@@ -184,7 +184,130 @@ function heightNoise(nx, ny, nz) {
   );
 }
 
-const waterMeshes = []; // { mesh, baseY, phase } — gently bobbed each frame
+const waterMeshes = []; // { mesh, baseY, phase, basePos } — real per-vertex ripples each frame
+const fish = [];
+const boats = []; // { obj, lake, cx, cz }
+const ripples = [];
+
+// Shared ripple formula (radiating rings + a finer wavelet) so the water
+// surface, the boats resting on it, and anything else that cares about
+// "how high is the water here" all agree.
+function waveHeight(lake, vx, vz, t) {
+  const dist = Math.hypot(vx, vz);
+  return (
+    Math.sin(dist * 3.2 - t * 1.6 + lake.phase) * 0.028 +
+    Math.sin(vx * 4 + vz * 3 + t * 1.1 + lake.phase) * 0.014
+  );
+}
+
+function updateWater(t) {
+  for (const w of waterMeshes) {
+    const arr = w.mesh.geometry.attributes.position.array;
+    const base = w.basePos;
+    for (let i = 0; i < arr.length; i += 3) {
+      const vx = base[i];
+      const vz = base[i + 2];
+      const dist = Math.hypot(vx, vz);
+      arr[i] = vx;
+      arr[i + 1] = w.baseY + Math.sin(dist * 3.2 - t * 1.6 + w.phase) * 0.028 + Math.sin(vx * 4 + vz * 3 + t * 1.1 + w.phase) * 0.014;
+      arr[i + 2] = vz;
+    }
+    w.mesh.geometry.attributes.position.needsUpdate = true;
+    w.mesh.geometry.computeVertexNormals();
+  }
+}
+
+function updateBoats(t) {
+  for (const b of boats) {
+    const h = waveHeight(b.lake, b.cx, b.cz, t);
+    b.obj.position.y = b.lake.waterY + 0.03 + h;
+    b.obj.rotation.z = h * 1.8;
+    b.obj.rotation.x = Math.sin(t * 1.3 + b.lake.phase) * 0.05;
+  }
+}
+
+// ---- fish: pure decoration, wander in slow loops within their lake ------
+const FISH_COLORS = [0xf4a460, 0xc9c9c9, 0xff8c69, 0x8fb8de, 0xe8b4d8];
+function buildFish(seed) {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: FISH_COLORS[seed % FISH_COLORS.length], roughness: 0.5, flatShading: true });
+  const body = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.085, 6), mat);
+  body.rotation.z = Math.PI / 2;
+  group.add(body);
+  const tailPivot = new THREE.Group();
+  tailPivot.position.x = -0.04;
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.035, 4), mat);
+  tail.rotation.z = -Math.PI / 2;
+  tail.position.x = -0.018;
+  tailPivot.add(tail);
+  group.add(tailPivot);
+  group.userData.tail = tailPivot;
+  return group;
+}
+
+function spawnFish(lake, count) {
+  for (let i = 0; i < count; i++) {
+    const f = buildFish(Math.floor(Math.random() * 1e6));
+    const radius = Math.random() * lake.radius * 0.55;
+    const angle = Math.random() * Math.PI * 2;
+    f.position.set(lake.x + Math.cos(angle) * radius, lake.waterY - 0.05, lake.z + Math.sin(angle) * radius);
+    decorGroup.add(f);
+    fish.push({
+      obj: f, lake, angle, radius,
+      speed: 0.3 + Math.random() * 0.3,
+      depth: 0.03 + Math.random() * 0.05,
+      phase: Math.random() * Math.PI * 2,
+    });
+  }
+}
+
+function updateFish(t, dtSec) {
+  for (const f of fish) {
+    f.angle += dtSec * f.speed;
+    const r = f.radius * (0.9 + Math.sin(t * 0.3 + f.phase) * 0.1);
+    f.obj.position.x = f.lake.x + Math.cos(f.angle) * r;
+    f.obj.position.z = f.lake.z + Math.sin(f.angle) * r;
+    f.obj.position.y = f.lake.waterY - f.depth + Math.sin(t * 2 + f.phase) * 0.01;
+    f.obj.rotation.y = -f.angle + Math.PI / 2;
+    f.obj.userData.tail.rotation.y = Math.sin(t * 8 + f.phase) * 0.6;
+  }
+}
+
+// ---- ambient ripple rings: a fish surfacing, a drip, a breeze ------------
+function spawnRipple(lake) {
+  const geo = new THREE.RingGeometry(0.02, 0.036, 16);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xe8f4f8, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  const r = Math.random() * lake.radius * 0.5;
+  const a = Math.random() * Math.PI * 2;
+  mesh.position.set(lake.x + Math.cos(a) * r, lake.waterY + 0.012, lake.z + Math.sin(a) * r);
+  decorGroup.add(mesh);
+  ripples.push({ mesh, born: performance.now(), life: 2200 });
+}
+
+function updateRipples(now) {
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const r = ripples[i];
+    const age = now - r.born;
+    if (age > r.life) {
+      decorGroup.remove(r.mesh);
+      ripples.splice(i, 1);
+      continue;
+    }
+    const t01 = age / r.life;
+    const scale = 1 + t01 * 9;
+    r.mesh.scale.set(scale, scale, scale);
+    r.mesh.material.opacity = 0.5 * (1 - t01);
+  }
+}
+
+let nextRippleAt = 0;
+function maybeSpawnRipple(now) {
+  if (now < nextRippleAt || LAKES.length === 0) return;
+  spawnRipple(LAKES[Math.floor(Math.random() * LAKES.length)]);
+  nextRippleAt = now + 1500 + Math.random() * 2500;
+}
 
 function buildIsland() {
   const group = new THREE.Group();
@@ -281,13 +404,18 @@ function buildIsland() {
     for (let i = 1; i <= segs; i++) idx.push(0, i, i + 1);
     waterGeo.setIndex(idx);
     waterGeo.computeVertexNormals();
-    const waterMat = new THREE.MeshStandardMaterial({
-      vertexColors: true, transparent: true, opacity: 0.85, roughness: 0.1, metalness: 0.2,
+    const waterMat = new THREE.MeshPhysicalMaterial({
+      vertexColors: true, transparent: true, opacity: 0.88,
+      roughness: 0.12, metalness: 0.05, clearcoat: 0.7, clearcoatRoughness: 0.18,
     });
     const surface = new THREE.Mesh(waterGeo, waterMat);
     surface.position.set(lake.x, 0, lake.z);
     group.add(surface);
-    waterMeshes.push({ mesh: surface, baseY: y, phase: li * 1.7 });
+    lake.phase = li * 1.7;
+    // Base (still-water) vertex positions, kept separate from the live
+    // array so per-frame wave displacement has a stable reference to
+    // offset from instead of drifting.
+    waterMeshes.push({ mesh: surface, baseY: y, phase: lake.phase, basePos: Float32Array.from(positions) });
 
     // pale foam ring right at the shoreline
     const foam = new THREE.Mesh(
@@ -757,9 +885,13 @@ function buildDock(lake, index) {
       group.add(post);
     }
     const boat = buildRowboat();
-    boat.position.set(endPt.x + perpDir.x * 0.55, lake.waterY + 0.03, endPt.z + perpDir.z * 0.55);
+    const boatX = endPt.x + perpDir.x * 0.55;
+    const boatZ = endPt.z + perpDir.z * 0.55;
+    boat.position.set(boatX, lake.waterY + 0.03, boatZ);
     boat.rotation.y = angle;
     group.add(boat);
+    group.userData.boat = boat;
+    group.userData.boatOffset = { cx: boatX - lake.x, cz: boatZ - lake.z };
   }
 
   group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
@@ -1285,9 +1417,14 @@ function generateDecor() {
   scatterRandom(24, buildFlowerPatch, 0.25);
 
   for (let li = 0; li < LAKES.length; li++) {
-    const dock = buildDock(LAKES[li], li);
+    const lake = LAKES[li];
+    const dock = buildDock(lake, li);
     decorGroup.add(dock);
     if (dock.userData.lantern) lanterns.push(dock.userData.lantern);
+    if (dock.userData.boat) {
+      boats.push({ obj: dock.userData.boat, lake, cx: dock.userData.boatOffset.cx, cz: dock.userData.boatOffset.cz });
+    }
+    spawnFish(lake, 3);
   }
 }
 
@@ -1637,9 +1774,11 @@ function animate() {
   for (const lantern of lanterns) {
     lantern.emissiveIntensity = 0.2 + nightFactor * (0.7 + Math.sin(t * 4) * 0.15);
   }
-  for (const w of waterMeshes) {
-    w.mesh.position.y = 0.01 * Math.sin(t * 0.8 + w.phase);
-  }
+  updateWater(t);
+  updateBoats(t);
+  updateFish(t, dtSec);
+  updateRipples(now);
+  maybeSpawnRipple(now);
 
   updateCameraTween();
   renderLabels();
