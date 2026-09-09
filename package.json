@@ -1,0 +1,24 @@
+{
+  "name": "agent-colony",
+  "version": "1.0.0",
+  "description": "A hex-grid dashboard for your Claude Code projects. Click a tile, drop into that project's agent session.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.agentcolony.app",
+    "productName": "Agent Colony",
+    "files": ["src/**/*", "package.json"],
+    "win": {
+      "target": "nsis"
+    }
+  }
+}

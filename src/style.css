@@ -1,0 +1,121 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", sans-serif;
+  background: radial-gradient(ellipse at center, #1a2438 0%, #0a0e18 100%);
+  color: #e8ecf5;
+  min-height: 100vh;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 28px;
+  border-bottom: 1px solid #22304a;
+}
+
+header h1 {
+  font-size: 20px;
+  margin: 0;
+}
+
+#addBtn {
+  background: #3d5aff;
+  color: white;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+#addBtn:hover { background: #5470ff; }
+
+.hex-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 40px;
+  justify-content: center;
+}
+
+.hex-tile {
+  position: relative;
+  width: 160px;
+  height: 184px;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  background: linear-gradient(160deg, #24304a, #16202f);
+  border: 2px solid #33456b;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+  padding: 20px 14px;
+  text-align: center;
+}
+
+.hex-tile:hover {
+  transform: translateY(-6px) scale(1.03);
+  border-color: #5470ff;
+}
+
+.hex-tile.active {
+  border-color: #33d17a;
+  box-shadow: 0 0 24px rgba(51, 209, 122, 0.35);
+}
+
+.tile-face {
+  font-size: 34px;
+  margin-bottom: 8px;
+}
+
+.tile-name {
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.tile-status {
+  font-size: 11px;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #2a3550;
+  color: #9fb0d0;
+}
+
+.hex-tile.active .tile-status {
+  background: #1c4a30;
+  color: #6ee89f;
+}
+
+.remove-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: transparent;
+  border: none;
+  color: #6c7a99;
+  font-size: 14px;
+  cursor: pointer;
+  z-index: 2;
+}
+.remove-btn:hover { color: #ff6b6b; }
+
+.empty-msg {
+  text-align: center;
+  color: #6c7a99;
+  margin-top: 60px;
+}
+
+.add-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  color: #6c7a99;
+  font-size: 28px;
+}
