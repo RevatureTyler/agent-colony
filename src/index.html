@@ -10,10 +10,16 @@
 </head>
 <body>
   <header>
-    <h1>🪐 Agent Colony</h1>
+    <h1>🏰 Agent Colony</h1>
+    <span id="buildingCount" class="building-count" hidden></span>
     <button id="addBtn">+ Add project</button>
   </header>
   <main id="scene-wrap"></main>
+  <aside id="sidebar">
+    <h2>Realm Log</h2>
+    <ul id="threadList"></ul>
+  </aside>
+  <div id="toasts"></div>
   <p id="empty" class="empty-msg" hidden>No projects yet — click "Add project" to register a folder.</p>
   <p id="hint" class="hint-msg">Scroll to zoom · drag to orbit · click a building to open · right-click to remove</p>
   <script type="module" src="renderer.js"></script>
