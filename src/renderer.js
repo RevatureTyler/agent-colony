@@ -204,7 +204,7 @@ function buildIsland() {
     let pz = z * (0.86 + 0.09 * Math.cos(nx * 3.7));
     let py = ny * ISLAND_RADIUS * flatten;
     const bump = heightNoise(nx, ny, nz);
-    py += ny > 0.05 ? bump * 0.85 : bump * 0.12;
+    py += ny > 0.05 ? bump * 0.5 : bump * 0.12;
 
     let inLake = false;
     if (ny > 0) {
@@ -818,16 +818,16 @@ function rebuildScene() {
   // building/keep/waypost position before anything gets placed.
   resetTerrain();
   const total = projects.length + 1;
-  const spots = [{ x: 0, z: 0, radius: 0.9, y: raycastHeight(islandMesh, 0, 0) }];
+  const spots = [{ x: 0, z: 0, radius: 2.0, y: raycastHeight(islandMesh, 0, 0) }];
   const projectPts = projects.map((project, i) => {
     const { x, z } = scatterPoint(i, total);
     return { project, x, z };
   });
   for (const p of projectPts) {
-    spots.push({ x: p.x, z: p.z, radius: 0.55, y: raycastHeight(islandMesh, p.x, p.z) });
+    spots.push({ x: p.x, z: p.z, radius: 1.1, y: raycastHeight(islandMesh, p.x, p.z) });
   }
   const addPt = scatterPoint(projects.length, total);
-  spots.push({ x: addPt.x, z: addPt.z, radius: 0.35, y: raycastHeight(islandMesh, addPt.x, addPt.z) });
+  spots.push({ x: addPt.x, z: addPt.z, radius: 0.7, y: raycastHeight(islandMesh, addPt.x, addPt.z) });
   flattenSpots(spots);
 
   projectPts.forEach((p, i) => {
