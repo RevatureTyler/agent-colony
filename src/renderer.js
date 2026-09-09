@@ -1131,17 +1131,20 @@ function generateDecor() {
     }
   }
 
+  // Sparse, larger-footprint decorative landmarks go first, while the
+  // island is still empty — otherwise by the time ~125 trees/bushes/rocks
+  // already dot the island, a spot 1.6 units from all of them is nearly
+  // impossible to find within a handful of attempts and the landmark
+  // silently fails to place. Pure atmosphere: no click handler, no tie to
+  // any project.
+  scatterRandom(1, buildTavern, 1.6, (obj) => cozyBuildings.push(obj));
+  scatterRandom(2, buildWell, 0.9);
+  scatterRandom(1, buildWindmill, 1.4, (obj) => windmills.push(obj));
+
   scatterRandom(48, buildTree, 0.5);
   scatterRandom(34, buildBush, 0.3);
   scatterRandom(20, buildRock, 0.4);
   scatterRandom(24, buildFlowerPatch, 0.25);
-
-  // Sparse, larger-footprint decorative landmarks — pure atmosphere, no
-  // click handler, no tie to any project. Placed with extra spacing so
-  // they read as destinations rather than clutter.
-  scatterRandom(1, buildTavern, 1.6, (obj) => cozyBuildings.push(obj));
-  scatterRandom(2, buildWell, 0.9);
-  scatterRandom(1, buildWindmill, 1.4, (obj) => windmills.push(obj));
 }
 
 // ---- a few birds circling the island for ambience ------------------------
