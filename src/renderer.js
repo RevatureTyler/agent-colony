@@ -318,7 +318,10 @@ function buildIsland() {
   const grassA = new THREE.Color(0x4a9963);
   const grassB = new THREE.Color(0x2f6b46);
   const rock = new THREE.Color(0x59503f);
-  const water = new THREE.Color(0x2a4d63);
+  // Lakebed, seen through the transparent water surface above it — kept
+  // sandy rather than blue so the actual water mesh reads as distinct
+  // water instead of blending into an already-dark carved bowl.
+  const lakebed = new THREE.Color(0xb89a5c);
 
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
@@ -356,7 +359,7 @@ function buildIsland() {
     pos.setXYZ(i, px, py, pz);
 
     let c;
-    if (inLake) c = water;
+    if (inLake) c = lakebed;
     else if (ny < 0.02) c = rock.clone().lerp(grassB, 0.15);
     else if (py < -1.55) c = sand.clone().lerp(grassA, 0.25);
     else {
@@ -378,7 +381,10 @@ function buildIsland() {
 
   for (let li = 0; li < LAKES.length; li++) {
     const lake = LAKES[li];
-    const y = raycastHeight(mesh, lake.x, lake.z) - 0.1;
+    // Sit clearly above the carved lakebed (not just 0.1 below the raw
+    // terrain sample) so the water reads as a surface floating over a
+    // basin, with real clearance instead of nearly touching the floor.
+    const y = raycastHeight(mesh, lake.x, lake.z) + 0.05;
     lake.waterY = y;
 
     // Jittered-radius fan instead of a perfect circle, so the shoreline
@@ -386,8 +392,11 @@ function buildIsland() {
     // keeps the wobble stable across rebuilds.
     const jitterSeed = li * 91.7 + 12.3;
     const segs = 28;
-    const deep = new THREE.Color(0x1f4258);
-    const shallow = new THREE.Color(0x4f9cc4);
+    // Bright, clearly-blue palette with real contrast against the sandy
+    // lakebed showing through — the previous dark-navy tones were nearly
+    // indistinguishable from the terrain's own carved-bowl shading.
+    const deep = new THREE.Color(0x1c7fa8);
+    const shallow = new THREE.Color(0x7fe0f2);
     const positions = [0, y, 0];
     const colors = [deep.r, deep.g, deep.b];
     for (let i = 0; i <= segs; i++) {
@@ -405,8 +414,9 @@ function buildIsland() {
     waterGeo.setIndex(idx);
     waterGeo.computeVertexNormals();
     const waterMat = new THREE.MeshPhysicalMaterial({
-      vertexColors: true, transparent: true, opacity: 0.88,
-      roughness: 0.12, metalness: 0.05, clearcoat: 0.7, clearcoatRoughness: 0.18,
+      vertexColors: true, transparent: true, opacity: 0.8,
+      roughness: 0.1, metalness: 0.0, clearcoat: 0.8, clearcoatRoughness: 0.15,
+      emissive: 0x0a3a52, emissiveIntensity: 0.25,
     });
     const surface = new THREE.Mesh(waterGeo, waterMat);
     surface.position.set(lake.x, 0, lake.z);
@@ -1225,8 +1235,8 @@ function updateWanderers(t, dtSec) {
       continue;
     }
 
-    const dx = w.target.x - p.position.x;
-    const dz = w.target.z - p.position.z;
+    let dx = w.target.x - p.position.x;
+    let dz = w.target.z - p.position.z;
     const dist = Math.hypot(dx, dz);
 
     if (dist < 0.1) {
@@ -1235,9 +1245,29 @@ function updateWanderers(t, dtSec) {
       continue;
     }
 
+    // Lake "hit boxes": steer away whenever the walk would carry them
+    // through one, not just when picking a destination — a straight line
+    // between two valid points can still cross a lake in between.
+    dx /= dist;
+    dz /= dist;
+    for (const lake of LAKES) {
+      const lx = p.position.x - lake.x;
+      const lz = p.position.z - lake.z;
+      const ldist = Math.hypot(lx, lz);
+      const margin = lake.radius + 0.35;
+      if (ldist < margin) {
+        const push = (margin - ldist) / margin;
+        dx += (lx / (ldist || 1)) * push * 2.2;
+        dz += (lz / (ldist || 1)) * push * 2.2;
+      }
+    }
+    const steerLen = Math.hypot(dx, dz) || 1;
+    dx /= steerLen;
+    dz /= steerLen;
+
     const step = Math.min(dist, w.speed * dtSec);
-    p.position.x += (dx / dist) * step;
-    p.position.z += (dz / dist) * step;
+    p.position.x += dx * step;
+    p.position.z += dz * step;
     const surface = surfacePointAt(p.position.x, p.position.z);
     if (surface) p.position.y = surface.y;
     p.rotation.y = Math.atan2(dx, dz);
