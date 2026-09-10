@@ -1100,6 +1100,18 @@ function buildPerson(seed) {
   tool.visible = false;
   armR.add(tool);
 
+  // ~1 in 4 villagers carry a torch in their free hand (left, since the
+  // tool above already claims the right one) — always visible, unlike
+  // the tool, since carrying a torch isn't tied to "is this project
+  // active" the way holding a hammer is.
+  if ((seed >> 12) % 4 === 0) {
+    const carried = buildTorch();
+    carried.scale.setScalar(0.55);
+    carried.position.set(0, -0.16, 0.01);
+    armL.add(carried);
+    registerTorch(carried);
+  }
+
   const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), skinMat);
   headMesh.position.y = shoulderY + 0.12;
   group.add(headMesh);
