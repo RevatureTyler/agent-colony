@@ -40,6 +40,24 @@ const LAKES = [
   { x: 1.2, z: 4.6, radius: 0.8 },
 ];
 
+// Each lake gets its own random set of harmonics so the outline reads as
+// an actual irregular pond (bays, points) instead of a wobbled circle —
+// shared by the terrain carve, the water mesh, and the foam ring so the
+// shoreline lines up everywhere instead of drifting apart.
+for (const lake of LAKES) {
+  const harmonicCount = 3 + Math.floor(Math.random() * 2);
+  lake.shape = Array.from({ length: harmonicCount }, (_, i) => ({
+    freq: 2 + i + Math.floor(Math.random() * 2),
+    amp: 0.16 + Math.random() * 0.22,
+    phase: Math.random() * Math.PI * 2,
+  }));
+}
+function lakeShapeRadius(lake, angle) {
+  let m = 1;
+  for (const h of lake.shape) m += Math.sin(angle * h.freq + h.phase) * h.amp;
+  return Math.max(0.4, m);
+}
+
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 300);
 camera.position.set(13, 11, 16);
@@ -461,11 +479,14 @@ function buildIsland() {
     let inLake = false;
     if (ny > 0) {
       for (const lake of LAKES) {
-        const d = Math.hypot(px - lake.x, pz - lake.z);
-        if (d < lake.radius) {
-          const dip = 1 - d / lake.radius;
+        const dx = px - lake.x;
+        const dz = pz - lake.z;
+        const d = Math.hypot(dx, dz);
+        const effectiveRadius = lake.radius * lakeShapeRadius(lake, Math.atan2(dz, dx));
+        if (d < effectiveRadius) {
+          const dip = 1 - d / effectiveRadius;
           py -= dip * dip * 0.6;
-          if (d < lake.radius * 0.82) inLake = true;
+          if (d < effectiveRadius * 0.82) inLake = true;
         }
       }
     }
@@ -501,33 +522,30 @@ function buildIsland() {
     // Sample the natural (undipped) rim instead — at d=radius the dip
     // falls to exactly 0 — and use that as the waterline, so however deep
     // the center is carved, the surface stays up at the shore's height.
+    const segs = 32;
     let rimSum = 0;
-    const rimSamples = 6;
-    for (let ri = 0; ri < rimSamples; ri++) {
-      const a = (ri / rimSamples) * Math.PI * 2;
-      rimSum += raycastHeight(mesh, lake.x + Math.cos(a) * lake.radius * 0.99, lake.z + Math.sin(a) * lake.radius * 0.99);
+    for (let ri = 0; ri < segs; ri++) {
+      const a = (ri / segs) * Math.PI * 2;
+      const r = lake.radius * lakeShapeRadius(lake, a) * 0.99;
+      rimSum += raycastHeight(mesh, lake.x + Math.cos(a) * r, lake.z + Math.sin(a) * r);
     }
-    const y = rimSum / rimSamples + 0.02;
+    const y = rimSum / segs + 0.02;
     lake.waterY = y;
 
-    // Jittered-radius fan instead of a perfect circle, so the shoreline
-    // reads as natural rather than a stamped-out disc. A per-lake seed
-    // keeps the wobble stable across rebuilds.
-    const jitterSeed = li * 91.7 + 12.3;
-    const segs = 28;
-    // Strong center-to-edge contrast so the disc actually reads as having
-    // depth rather than one flat tint: deep water goes dark and rich,
-    // shallow water near shore stays bright cyan.
-    const deep = new THREE.Color(0x0a3f5c);
-    const shallow = new THREE.Color(0x5bc8e8);
+    // Darker, richer blues — deep water goes near-navy, shallow stays a
+    // muted (not bright/cyan) blue, so the disc reads as genuinely deep
+    // rather than a tinted swimming pool.
+    const deep = new THREE.Color(0x061f30);
+    const shallow = new THREE.Color(0x1f6f94);
     const positions = [0, y, 0];
     const colors = [deep.r, deep.g, deep.b];
+    const rimPts = [];
     for (let i = 0; i <= segs; i++) {
       const a = (i / segs) * Math.PI * 2;
-      const wobble = 1 + Math.sin(a * 3 + jitterSeed) * 0.08 + Math.sin(a * 7 + jitterSeed * 2) * 0.04;
-      const r = lake.radius * 0.82 * wobble;
+      const r = lake.radius * 0.82 * lakeShapeRadius(lake, a);
       positions.push(Math.cos(a) * r, y, Math.sin(a) * r);
       colors.push(shallow.r, shallow.g, shallow.b);
+      rimPts.push({ x: Math.cos(a) * r, z: Math.sin(a) * r });
     }
     const waterGeo = new THREE.BufferGeometry();
     waterGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
@@ -542,7 +560,7 @@ function buildIsland() {
       // solid flat-colored disc reads as flat no matter how blue it is.
       vertexColors: true, transparent: true, opacity: 0.82,
       roughness: 0.08, metalness: 0.0, clearcoat: 0.9, clearcoatRoughness: 0.08,
-      emissive: 0x0a2c40, emissiveIntensity: 0.22,
+      emissive: 0x06202f, emissiveIntensity: 0.2,
     });
     const surface = new THREE.Mesh(waterGeo, waterMat);
     surface.position.set(lake.x, 0, lake.z);
@@ -553,13 +571,30 @@ function buildIsland() {
     // offset from instead of drifting.
     waterMeshes.push({ mesh: surface, baseY: y, phase: lake.phase, basePos: Float32Array.from(positions) });
 
-    // pale foam ring right at the shoreline
+    // Pale foam band right at the shoreline — a matching-shape ring
+    // (inner/outer offsets of the same irregular outline), not a plain
+    // circle, so it doesn't visibly disagree with the water beneath it.
+    const foamPositions = [];
+    for (const pt of rimPts) {
+      const d = Math.hypot(pt.x, pt.z) || 1;
+      const nx = pt.x / d, nz = pt.z / d;
+      foamPositions.push(pt.x - nx * 0.08, y + 0.008, pt.z - nz * 0.08);
+      foamPositions.push(pt.x + nx * 0.05, y + 0.008, pt.z + nz * 0.05);
+    }
+    const foamIdx = [];
+    for (let i = 0; i < segs; i++) {
+      const a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
+      foamIdx.push(a, b, c, b, d, c);
+    }
+    const foamGeo = new THREE.BufferGeometry();
+    foamGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(foamPositions), 3));
+    foamGeo.setIndex(foamIdx);
+    foamGeo.computeVertexNormals();
     const foam = new THREE.Mesh(
-      new THREE.RingGeometry(lake.radius * 0.78, lake.radius * 0.85, segs),
-      new THREE.MeshStandardMaterial({ color: 0xdff2f5, transparent: true, opacity: 0.35, roughness: 0.6 })
+      foamGeo,
+      new THREE.MeshStandardMaterial({ color: 0xdff2f5, transparent: true, opacity: 0.3, roughness: 0.6, side: THREE.DoubleSide })
     );
-    foam.rotation.x = -Math.PI / 2;
-    foam.position.set(lake.x, y + 0.008, lake.z);
+    foam.position.set(lake.x, 0, lake.z);
     group.add(foam);
   }
 
