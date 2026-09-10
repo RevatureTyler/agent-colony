@@ -1203,7 +1203,7 @@ function pickWanderSpot() {
     const r = Math.sqrt(Math.random()) * ISLAND_RADIUS * 0.85;
     const x = Math.cos(angle) * r;
     const z = Math.sin(angle) * r;
-    if (LAKES.some((l) => Math.hypot(x - l.x, z - l.z) < l.radius + 0.2)) continue;
+    if (wanderObstacles().some((o) => Math.hypot(x - o.x, z - o.z) < o.radius + 0.2)) continue;
     const surface = surfacePointAt(x, z);
     if (!surface || surface.y < -1.4) continue;
     return surface;
@@ -1230,6 +1230,10 @@ function spawnWanderers(count) {
   }
 }
 
+function wanderObstacles() {
+  return [...LAKES, ...dynamicHitboxes, ...staticHitboxes];
+}
+
 function updateWanderers(t, dtSec) {
   const now = performance.now();
   for (const w of wanderers) {
@@ -1254,20 +1258,21 @@ function updateWanderers(t, dtSec) {
       continue;
     }
 
-    // Lake "hit boxes": steer away whenever the walk would carry them
-    // through one, not just when picking a destination — a straight line
-    // between two valid points can still cross a lake in between.
+    // Steer away from every hit box (lakes + any building, present or
+    // future) whenever the walk would carry them through one — not just
+    // when picking a destination, since a straight line between two
+    // valid points can still cross an obstacle sitting in between.
     dx /= dist;
     dz /= dist;
-    for (const lake of LAKES) {
-      const lx = p.position.x - lake.x;
-      const lz = p.position.z - lake.z;
-      const ldist = Math.hypot(lx, lz);
-      const margin = lake.radius + 0.35;
-      if (ldist < margin) {
-        const push = (margin - ldist) / margin;
-        dx += (lx / (ldist || 1)) * push * 2.2;
-        dz += (lz / (ldist || 1)) * push * 2.2;
+    for (const obstacle of wanderObstacles()) {
+      const ox = p.position.x - obstacle.x;
+      const oz = p.position.z - obstacle.z;
+      const odist = Math.hypot(ox, oz);
+      const margin = obstacle.radius + 0.35;
+      if (odist < margin) {
+        const push = (margin - odist) / margin;
+        dx += (ox / (odist || 1)) * push * 2.2;
+        dz += (oz / (odist || 1)) * push * 2.2;
       }
     }
     const steerLen = Math.hypot(dx, dz) || 1;
@@ -1366,6 +1371,15 @@ const clickables = [];
 const prevActive = new Map(); // path -> bool, to detect transitions for toasts
 const lastChange = new Map(); // path -> timestamp, for the sidebar's relative time
 
+// ---- building hitboxes: anything villagers should walk around ----------
+// Derived straight from each structure's own flatten radius (every
+// building already needs one of those to avoid floating on bumpy
+// terrain), so a new building type gets collision avoidance for free the
+// moment it's placed through flattenSpots/scatterRandom — nothing extra
+// to remember to wire up.
+let dynamicHitboxes = []; // rebuilt each time tiles/keep/waypost move
+const staticHitboxes = []; // decor landmarks (tavern, well, windmill, ...), fixed once placed
+
 function rebuildScene() {
   for (const [key] of tiles) clearTile(key);
   clickables.length = 0;
@@ -1395,6 +1409,8 @@ function rebuildScene() {
   clickables.push(addHit);
 
   buildRoads(spots);
+
+  dynamicHitboxes = spots.map((s) => ({ x: s.x, z: s.z, radius: s.radius * 0.5 }));
 }
 
 // ---- natural decoration: random rejection-sampled trees & bushes --------
@@ -1428,6 +1444,10 @@ function generateDecor() {
         // Rigid structures (unlike trees/bushes) need a flat pad or they
         // float/clip like the buildings used to — same fix as tiles.
         flattenSpots([{ x, z, radius: flattenRadius, y: surface.y }]);
+        // And the same flatten radius doubles as the source for a
+        // collision hitbox, so any future decor building placed this way
+        // automatically gets both for free.
+        staticHitboxes.push({ x, z, radius: flattenRadius * 0.5 });
       }
       const seed = Math.floor(Math.random() * 1e6);
       const obj = build(seed);
