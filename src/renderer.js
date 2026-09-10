@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from '../node_modules/three/examples/jsm/controls/OrbitControls.js';
+import { EffectComposer } from '../node_modules/three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from '../node_modules/three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js';
 
 window.addEventListener('error', (e) => console.error('[scene]', e.message, e.filename, e.lineno));
 window.addEventListener('unhandledrejection', (e) => console.error('[scene]', e.reason));
@@ -16,6 +19,8 @@ window.addEventListener('unhandledrejection', (e) => console.error('[scene]', e.
 const wrap = document.getElementById('scene-wrap');
 const emptyMsg = document.getElementById('empty');
 const sidebarList = document.getElementById('threadList');
+const sidebarSearch = document.getElementById('sidebarSearch');
+sidebarSearch.addEventListener('input', () => renderSidebar());
 const toastHost = document.getElementById('toasts');
 const buildingCountEl = document.getElementById('buildingCount');
 const timeLabelEl = document.getElementById('timeLabel');
@@ -47,6 +52,14 @@ renderer.toneMappingExposure = 1.05;
 if ('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace;
 wrap.appendChild(renderer.domElement);
 
+// Bloom so torches/lanterns/hearth windows actually glow instead of just
+// being bright-colored — a fairly high threshold keeps daytime sky/grass
+// from blooming, only genuinely emissive things cross it.
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.55, 0.4, 0.86);
+composer.addPass(bloomPass);
+
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
@@ -62,6 +75,7 @@ function resize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
+  composer.setSize(w, h);
 }
 window.addEventListener('resize', resize);
 
@@ -1716,7 +1730,9 @@ function relativeTime(ts) {
 
 function renderSidebar() {
   sidebarList.innerHTML = '';
-  const sorted = [...projects].sort((a, b) => (b.active - a.active) || (lastChange.get(b.path) || 0) - (lastChange.get(a.path) || 0));
+  const query = sidebarSearch.value.trim().toLowerCase();
+  const filtered = query ? projects.filter((p) => p.name.toLowerCase().includes(query)) : projects;
+  const sorted = [...filtered].sort((a, b) => (b.active - a.active) || (lastChange.get(b.path) || 0) - (lastChange.get(a.path) || 0));
   for (const project of sorted) {
     const li = document.createElement('li');
     li.className = project.active ? 'active' : '';
@@ -1835,6 +1851,25 @@ apRemove.addEventListener('click', async () => {
 });
 apCancel.addEventListener('click', () => selectTile(null));
 window.addEventListener('keydown', (evt) => { if (evt.key === 'Escape') selectTile(null); });
+
+const HOME_CAMERA_POS = new THREE.Vector3(13, 11, 16);
+const HOME_CAMERA_TARGET = new THREE.Vector3(0, 1, 0);
+function goHome() {
+  cameraTween = {
+    startPos: camera.position.clone(),
+    startTarget: controls.target.clone(),
+    endPos: HOME_CAMERA_POS.clone(),
+    endTarget: HOME_CAMERA_TARGET.clone(),
+    t0: performance.now(),
+    duration: 750,
+  };
+}
+window.addEventListener('keydown', (evt) => {
+  if (evt.key === 'h' || evt.key === 'H' || evt.key === 'Home') {
+    selectTile(null);
+    goHome();
+  }
+});
 
 // ---- nameplate labels (HTML overlay tracking 3D positions) --------------
 const labelEls = new Map(); // key -> div
@@ -2038,7 +2073,7 @@ function animate() {
   updateCameraTween();
   renderLabels();
   controls.update();
-  renderer.render(scene, camera);
+  composer.render();
 }
 
 resize();
