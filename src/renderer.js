@@ -18,6 +18,7 @@ const emptyMsg = document.getElementById('empty');
 const sidebarList = document.getElementById('threadList');
 const toastHost = document.getElementById('toasts');
 const buildingCountEl = document.getElementById('buildingCount');
+const timeLabelEl = document.getElementById('timeLabel');
 const labelHost = document.getElementById('labels');
 const actionPanel = document.getElementById('actionPanel');
 const apTitle = document.getElementById('apTitle');
@@ -142,6 +143,17 @@ function applyDayCycle() {
 
   if (starPoints) starPoints.material.opacity = s.star;
   nightFactor = s.star;
+
+  let phase;
+  if (hourFloat >= 5 && hourFloat < 7) phase = 'Dawn';
+  else if (hourFloat >= 7 && hourFloat < 17) phase = 'Day';
+  else if (hourFloat >= 17 && hourFloat < 19) phase = 'Dusk';
+  else phase = 'Night';
+  const h24 = now.getHours();
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  timeLabelEl.textContent = `${phase} · ${h12}:${mm} ${h24 < 12 ? 'AM' : 'PM'}`;
+
   return s;
 }
 let nightFactor = 0;
@@ -299,6 +311,18 @@ function updateRipples(now) {
     const scale = 1 + t01 * 9;
     r.mesh.scale.set(scale, scale, scale);
     r.mesh.material.opacity = 0.5 * (1 - t01);
+  }
+}
+
+function updateSmoke(t) {
+  for (const em of smokeEmitters) {
+    for (const p of em.puffs) {
+      const cycle = (t * 0.25 + p.phase) % 1;
+      p.mesh.position.set(em.baseX + Math.sin(t + p.phase * 6) * 0.03, em.baseY + cycle * 0.55, em.baseZ);
+      const scale = 0.4 + cycle * 1.6;
+      p.mesh.scale.setScalar(scale);
+      p.mesh.material.opacity = (1 - cycle) * 0.3;
+    }
   }
 }
 
@@ -632,6 +656,7 @@ function buildBuilding(seed) {
     const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.22, 8), trimMat);
     chimney.position.set(width * 0.25, height * 0.9 + 0.17, width * 0.25);
     group.add(chimney);
+    addChimneySmoke(chimney, chimney.position.y + 0.11);
     topY = height * 0.9 + 0.28;
   }
 
@@ -743,6 +768,14 @@ function buildTavern(seed) {
   win.position.set(0, 0.06 + 0.35, 0.451);
   group.add(win);
 
+  const chimney = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.06, 0.07, 0.3, 8),
+    new THREE.MeshStandardMaterial({ color: 0x8a8378, roughness: 0.9, flatShading: true })
+  );
+  chimney.position.set(-0.35, 0.06 + 1.35 + 0.15, -0.2);
+  group.add(chimney);
+  addChimneySmoke(chimney, chimney.position.y + 0.15);
+
   // entrance torches, opposite the barrel/sign side to avoid crowding
   for (const side of [-1, 1]) {
     const stake = buildTorch();
@@ -826,6 +859,21 @@ const windmills = [];
 const cozyBuildings = [];
 const lanterns = [];
 const torches = []; // { flameMat, light, phase } — flicker driven by nightFactor
+const smokeEmitters = []; // { puffs: [{mesh, phase}], baseX, baseY, baseZ }
+
+// Attach a small looping smoke-puff emitter above a chimney mesh, added
+// as a sibling in the chimney's own parent group so it moves with the
+// building automatically.
+function addChimneySmoke(chimneyMesh, topLocalY) {
+  const puffs = [];
+  for (let i = 0; i < 3; i++) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0x9a9a9a, transparent: true, opacity: 0, depthWrite: false });
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), mat);
+    chimneyMesh.parent.add(puff);
+    puffs.push({ mesh: puff, phase: i / 3 });
+  }
+  smokeEmitters.push({ puffs, baseX: chimneyMesh.position.x, baseY: topLocalY, baseZ: chimneyMesh.position.z });
+}
 
 // ---- torch: a wall/ground stake with a flame + point light --------------
 // Reused for the pair flanking each building's entrance AND standalone
@@ -1550,6 +1598,7 @@ function generateDecor() {
   scatterRandom(20, buildRock, 0.4);
   scatterRandom(24, buildFlowerPatch, 0.25);
   scatterRandom(10, () => buildTorch(), 0.6, (obj) => registerTorch(obj), 0.2);
+  decorGroup.add(buildGrassField(900));
 
   for (let li = 0; li < LAKES.length; li++) {
     const lake = LAKES[li];
@@ -1587,6 +1636,70 @@ for (let i = 0; i < 5; i++) {
     speed: 0.15 + Math.random() * 0.1,
     phase: Math.random() * Math.PI * 2,
   });
+}
+
+// ---- drifting clouds ------------------------------------------------
+const clouds = [];
+function buildCloud() {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true, transparent: true, opacity: 0.85 });
+  const puffs = 4 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < puffs; i++) {
+    const s = 0.6 + Math.random() * 0.5;
+    const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(s, 0), mat);
+    puff.position.set((Math.random() - 0.5) * 2.4, (Math.random() - 0.5) * 0.3, (Math.random() - 0.5) * 1.2);
+    group.add(puff);
+  }
+  group.userData.mat = mat;
+  return group;
+}
+for (let i = 0; i < 7; i++) {
+  const cloud = buildCloud();
+  const startX = (Math.random() - 0.5) * ISLAND_RADIUS * 4;
+  cloud.position.set(startX, 11 + Math.random() * 4, (Math.random() - 0.5) * ISLAND_RADIUS * 3);
+  scene.add(cloud);
+  clouds.push({ obj: cloud, speed: 0.15 + Math.random() * 0.2, bound: ISLAND_RADIUS * 2.2 });
+}
+
+function updateClouds(dtSec) {
+  const dim = 1 - nightFactor * 0.55;
+  for (const c of clouds) {
+    c.obj.position.x += c.speed * dtSec;
+    if (c.obj.position.x > c.bound) c.obj.position.x = -c.bound;
+    c.obj.userData.mat.color.setScalar(dim);
+  }
+}
+
+// ---- scattered grass tufts (instanced for cheap density) -----------------
+function buildGrassField(count) {
+  const bladeGeo = new THREE.ConeGeometry(0.02, 0.14, 3);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x3f8f5c, roughness: 0.9, flatShading: true });
+  const mesh = new THREE.InstancedMesh(bladeGeo, mat, count);
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  const dummy = new THREE.Object3D();
+  let placed = 0;
+  let attempts = 0;
+  while (placed < count && attempts < count * 6) {
+    attempts++;
+    const angle = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(Math.random()) * ISLAND_RADIUS * 0.86;
+    const x = Math.cos(angle) * r;
+    const z = Math.sin(angle) * r;
+    const surface = surfacePointAt(x, z);
+    if (!surface || surface.y < -1.4) continue;
+    if (LAKES.some((l) => Math.hypot(x - l.x, z - l.z) < l.radius + 0.3)) continue;
+    dummy.position.set(x, surface.y, z);
+    dummy.rotation.y = Math.random() * Math.PI * 2;
+    const s = 0.6 + Math.random() * 0.7;
+    dummy.scale.set(s, s * (0.7 + Math.random() * 0.6), s);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(placed, dummy.matrix);
+    placed++;
+  }
+  mesh.count = placed;
+  mesh.instanceMatrix.needsUpdate = true;
+  return mesh;
 }
 
 // ---- realm log sidebar + toasts ------------------------------------------
@@ -1919,6 +2032,8 @@ function animate() {
   updateFish(t, dtSec);
   updateRipples(now);
   maybeSpawnRipple(now);
+  updateClouds(dtSec);
+  updateSmoke(t);
 
   updateCameraTween();
   renderLabels();
