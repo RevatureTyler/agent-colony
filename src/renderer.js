@@ -225,8 +225,8 @@ const ripples = [];
 function waveHeight(lake, vx, vz, t) {
   const dist = Math.hypot(vx, vz);
   return (
-    Math.sin(dist * 3.2 - t * 1.6 + lake.phase) * 0.028 +
-    Math.sin(vx * 4 + vz * 3 + t * 1.1 + lake.phase) * 0.014
+    Math.sin(dist * 3.2 - t * 1.6 + lake.phase) * 0.055 +
+    Math.sin(vx * 5 + vz * 4 + t * 1.4 + lake.phase) * 0.025
   );
 }
 
@@ -239,7 +239,7 @@ function updateWater(t) {
       const vz = base[i + 2];
       const dist = Math.hypot(vx, vz);
       arr[i] = vx;
-      arr[i + 1] = w.baseY + Math.sin(dist * 3.2 - t * 1.6 + w.phase) * 0.028 + Math.sin(vx * 4 + vz * 3 + t * 1.1 + w.phase) * 0.014;
+      arr[i + 1] = w.baseY + Math.sin(dist * 3.2 - t * 1.6 + w.phase) * 0.055 + Math.sin(vx * 5 + vz * 4 + t * 1.4 + w.phase) * 0.025;
       arr[i + 2] = vz;
     }
     w.mesh.geometry.attributes.position.needsUpdate = true;
@@ -435,7 +435,7 @@ function buildIsland() {
   // Lakebed, seen through the transparent water surface above it — kept
   // sandy rather than blue so the actual water mesh reads as distinct
   // water instead of blending into an already-dark carved bowl.
-  const lakebed = new THREE.Color(0xb89a5c);
+  const lakebed = new THREE.Color(0x5c5238);
 
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
@@ -515,11 +515,11 @@ function buildIsland() {
     // keeps the wobble stable across rebuilds.
     const jitterSeed = li * 91.7 + 12.3;
     const segs = 28;
-    // Bright, saturated blue with real contrast against the sandy lakebed
-    // showing through — deep water stays a strong blue rather than the
-    // near-black of the first pass or a washed-out pale cyan.
-    const deep = new THREE.Color(0x0f5f8f);
-    const shallow = new THREE.Color(0x3fb2d9);
+    // Strong center-to-edge contrast so the disc actually reads as having
+    // depth rather than one flat tint: deep water goes dark and rich,
+    // shallow water near shore stays bright cyan.
+    const deep = new THREE.Color(0x0a3f5c);
+    const shallow = new THREE.Color(0x5bc8e8);
     const positions = [0, y, 0];
     const colors = [deep.r, deep.g, deep.b];
     for (let i = 0; i <= segs; i++) {
@@ -537,9 +537,12 @@ function buildIsland() {
     waterGeo.setIndex(idx);
     waterGeo.computeVertexNormals();
     const waterMat = new THREE.MeshPhysicalMaterial({
-      vertexColors: true, transparent: true, opacity: 0.93,
-      roughness: 0.1, metalness: 0.0, clearcoat: 0.8, clearcoatRoughness: 0.15,
-      emissive: 0x0a3a52, emissiveIntensity: 0.3,
+      // Moderate opacity on purpose: full opacity was hiding the darker
+      // lakebed entirely, which is what actually sold the depth — a
+      // solid flat-colored disc reads as flat no matter how blue it is.
+      vertexColors: true, transparent: true, opacity: 0.82,
+      roughness: 0.08, metalness: 0.0, clearcoat: 0.9, clearcoatRoughness: 0.08,
+      emissive: 0x0a2c40, emissiveIntensity: 0.22,
     });
     const surface = new THREE.Mesh(waterGeo, waterMat);
     surface.position.set(lake.x, 0, lake.z);
