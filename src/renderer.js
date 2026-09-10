@@ -58,7 +58,7 @@ wrap.appendChild(renderer.domElement);
 // from blooming, only genuinely emissive things cross it.
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.55, 0.4, 0.86);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.3, 0.35, 0.9);
 composer.addPass(bloomPass);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -138,7 +138,7 @@ sun.shadow.camera.bottom = -8;
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 26;
 scene.add(sun);
-const rim = new THREE.PointLight(0x5470ff, 3, 30);
+const rim = new THREE.PointLight(0x5470ff, 1.2, 30);
 rim.position.set(-8, 5, -8);
 scene.add(rim);
 
@@ -1457,7 +1457,7 @@ function buildRoads(spots) {
     let side = 1;
     for (let p = 1; p < pts.length - 1; p++) {
       dist += pts[p - 1].distanceTo(pts[p]);
-      if (dist > 2.2) {
+      if (dist > 1.6) {
         const dir = pts[Math.min(p + 1, pts.length - 1)].clone().sub(pts[p - 1]).normalize();
         const perp = new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(0.22 * side);
         const lamp = buildStreetLamp();
@@ -1805,8 +1805,8 @@ function generateDecor() {
   scatterRandom(34, buildBush, 0.3);
   scatterRandom(20, buildRock, 0.4);
   scatterRandom(24, buildFlowerPatch, 0.25);
-  scatterRandom(10, () => buildTorch(), 0.6, (obj) => registerTorch(obj), 0.2);
-  scatterRandom(6, () => buildStreetLamp(), 1.4, (obj) => registerStreetLamp(obj), 0.3);
+  scatterRandom(18, () => buildTorch(), 0.55, (obj) => registerTorch(obj), 0.2);
+  scatterRandom(10, () => buildStreetLamp(), 1.2, (obj) => registerStreetLamp(obj), 0.3);
   decorGroup.add(buildGrassField(900));
 
   for (let li = 0; li < LAKES.length; li++) {
@@ -2205,7 +2205,7 @@ function animate() {
     const mat = tile.building.userData.windowMat;
     mat.emissive.set(active ? HEARTH_GLOW : 0x000000);
     mat.emissiveIntensity = active ? 0.9 + Math.sin(t * 3) * 0.1 : 0;
-    tile.torch.intensity = nightFactor * (active ? 9 : 5) * (0.85 + Math.sin(t * 5 + tile.walkPhase) * 0.15);
+    tile.torch.intensity = nightFactor * (active ? 2.6 : 1.6) * (0.85 + Math.sin(t * 5 + tile.walkPhase) * 0.15);
 
     const flag = tile.building.userData.flag;
     if (flag) flag.rotation.y = Math.sin(t * 2.4 + tile.walkPhase) * 0.35;
@@ -2215,17 +2215,44 @@ function animate() {
     tool.visible = active;
 
     if (active) {
-      tile.person.position.x = 0.5 + Math.cos(t * 1.1 + phase) * 0.28;
-      tile.person.position.z = 0.3 + Math.sin(t * 1.1 + phase) * 0.28;
-      tile.person.rotation.y = -(t * 1.1 + phase) + Math.PI / 2;
+      // Patrol the building's perimeter, pausing every quarter-turn to
+      // "craft" (stand and swing the tool hard) before continuing — reads
+      // as actually working the site rather than pacing one little arc.
+      if (tile.craftState === undefined) {
+        tile.craftState = 'walk';
+        tile.craftAngle = phase;
+        tile.craftUntil = 0;
+      }
 
-      const swing = Math.sin(t * 7 + phase) * 0.55;
-      legL.rotation.x = swing;
-      legR.rotation.x = -swing;
-      armL.rotation.x = -swing * 0.8;
-      armR.rotation.x = swing * 0.8 - 0.4;
+      if (tile.craftState === 'craft') {
+        legL.rotation.x = 0;
+        legR.rotation.x = 0;
+        const hammer = Math.sin(t * 12 + phase) * 0.9 - 0.35;
+        armR.rotation.x = hammer;
+        armL.rotation.x = Math.sin(t * 2 + phase) * 0.08;
+        if (t > tile.craftUntil) tile.craftState = 'walk';
+      } else {
+        tile.craftAngle += dtSec * 0.55;
+        const radius = 0.52;
+        tile.person.position.x = Math.cos(tile.craftAngle) * radius;
+        tile.person.position.z = Math.sin(tile.craftAngle) * radius;
+        tile.person.rotation.y = -tile.craftAngle + Math.PI / 2;
+
+        const swing = Math.sin(t * 7 + phase) * 0.55;
+        legL.rotation.x = swing;
+        legR.rotation.x = -swing;
+        armL.rotation.x = -swing * 0.8;
+        armR.rotation.x = swing * 0.8 - 0.4;
+
+        if (tile.craftAngle - phase > Math.PI / 2) {
+          tile.craftAngle = phase;
+          tile.craftState = 'craft';
+          tile.craftUntil = t + 2 + Math.random() * 2.5;
+        }
+      }
       tile.person.position.y = Math.abs(Math.sin(t * 7 + phase)) * 0.03;
     } else {
+      tile.craftState = undefined;
       legL.rotation.x = 0;
       legR.rotation.x = 0;
       armL.rotation.x = Math.sin(t * 1.2 + phase) * 0.05;
@@ -2260,14 +2287,14 @@ function animate() {
     // Three.js version, so small numbers like the old 0.55 were nearly
     // invisible past a few centimeters — this is the actual bug behind
     // "the lamp doesn't do anything," not a missing feature.
-    torch.light.intensity = nightFactor * 9 * flicker;
+    torch.light.intensity = nightFactor * 2.6 * flicker;
   }
   for (const lamp of streetLamps) {
     // Steadier than an open torch flame — an oil lantern behind glass,
     // not a bare fire — and noticeably brighter/wider-reaching.
     const flicker = 0.92 + Math.sin(t * 3 + lamp.phase) * 0.06;
     lamp.flameMat.emissiveIntensity = (0.6 + nightFactor * 0.6) * flicker;
-    lamp.light.intensity = nightFactor * 22 * flicker;
+    lamp.light.intensity = nightFactor * 6 * flicker;
   }
   updateWater(t);
   updateBoats(t);
