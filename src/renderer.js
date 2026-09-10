@@ -83,15 +83,18 @@ window.addEventListener('resize', resize);
 // ---- real-time day/night cycle ------------------------------------------
 // Keyframes across a 24h clock: [hour, skyColor, fogColor, sunColor, sunIntensity,
 // hemiSky, hemiGround, hemiIntensity, starOpacity, sunElevationDeg]
+// Night ambient (hemiI/sunI) bumped up from the original pass — a "true
+// to physical moonlight" scene read as pitch black on screen even with
+// street lamps working, since there was nothing to see them glow against.
 const DAY_KEYS = [
-  { h: 0, sky: 0x0a0c1a, fog: 0x11101e, sun: 0x8fa5ff, sunI: 0.12, hemiSky: 0x2a3050, hemiGround: 0x0d0f10, hemiI: 0.35, star: 1, elev: -30 },
-  { h: 5, sky: 0x151527, fog: 0x1b1826, sun: 0xff9d6c, sunI: 0.4, hemiSky: 0x40406a, hemiGround: 0x241a12, hemiI: 0.4, star: 0.7, elev: -5 },
+  { h: 0, sky: 0x11142a, fog: 0x181830, sun: 0x8fa5ff, sunI: 0.25, hemiSky: 0x3a4270, hemiGround: 0x141824, hemiI: 0.55, star: 1, elev: -30 },
+  { h: 5, sky: 0x1c1c34, fog: 0x232035, sun: 0xff9d6c, sunI: 0.4, hemiSky: 0x50508a, hemiGround: 0x2a2018, hemiI: 0.55, star: 0.7, elev: -5 },
   { h: 7, sky: 0xffcf9e, fog: 0x3a2f2a, sun: 0xffd9a0, sunI: 1.1, hemiSky: 0x9fb0d0, hemiGround: 0x3a5030, hemiI: 0.6, star: 0, elev: 15 },
   { h: 12, sky: 0x8fc4e8, fog: 0x6a8ba8, sun: 0xfff6e0, sunI: 1.35, hemiSky: 0xbfd8ff, hemiGround: 0x3f6b46, hemiI: 0.75, star: 0, elev: 70 },
   { h: 17, sky: 0xf0a960, fog: 0x4a3428, sun: 0xffae5c, sunI: 1.0, hemiSky: 0xd9a066, hemiGround: 0x3f6b46, hemiI: 0.6, star: 0, elev: 20 },
-  { h: 19, sky: 0x2e2040, fog: 0x241f36, sun: 0xaa6a8c, sunI: 0.35, hemiSky: 0x453a66, hemiGround: 0x241a2c, hemiI: 0.45, star: 0.5, elev: -2 },
-  { h: 21, sky: 0x0d0e1e, fog: 0x14131f, sun: 0x8fa5ff, sunI: 0.15, hemiSky: 0x2a3050, hemiGround: 0x0d0f10, hemiI: 0.35, star: 1, elev: -20 },
-  { h: 24, sky: 0x0a0c1a, fog: 0x11101e, sun: 0x8fa5ff, sunI: 0.12, hemiSky: 0x2a3050, hemiGround: 0x0d0f10, hemiI: 0.35, star: 1, elev: -30 },
+  { h: 19, sky: 0x342850, fog: 0x2c2640, sun: 0xaa6a8c, sunI: 0.4, hemiSky: 0x5c4e80, hemiGround: 0x2c2038, hemiI: 0.55, star: 0.5, elev: -2 },
+  { h: 21, sky: 0x14172e, fog: 0x1c1c32, sun: 0x8fa5ff, sunI: 0.28, hemiSky: 0x3a4270, hemiGround: 0x141824, hemiI: 0.55, star: 1, elev: -20 },
+  { h: 24, sky: 0x11142a, fog: 0x181830, sun: 0x8fa5ff, sunI: 0.25, hemiSky: 0x3a4270, hemiGround: 0x141824, hemiI: 0.55, star: 1, elev: -30 },
 ];
 
 function lerp(a, b, t) { return a + (b - a) * t; }
@@ -135,7 +138,7 @@ sun.shadow.camera.bottom = -8;
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 26;
 scene.add(sun);
-const rim = new THREE.PointLight(0x5470ff, 0.35, 30);
+const rim = new THREE.PointLight(0x5470ff, 3, 30);
 rim.position.set(-8, 5, -8);
 scene.add(rim);
 
@@ -2202,7 +2205,7 @@ function animate() {
     const mat = tile.building.userData.windowMat;
     mat.emissive.set(active ? HEARTH_GLOW : 0x000000);
     mat.emissiveIntensity = active ? 0.9 + Math.sin(t * 3) * 0.1 : 0;
-    tile.torch.intensity = nightFactor * (active ? 0.55 : 0.3) * (0.85 + Math.sin(t * 5 + tile.walkPhase) * 0.15);
+    tile.torch.intensity = nightFactor * (active ? 9 : 5) * (0.85 + Math.sin(t * 5 + tile.walkPhase) * 0.15);
 
     const flag = tile.building.userData.flag;
     if (flag) flag.rotation.y = Math.sin(t * 2.4 + tile.walkPhase) * 0.35;
@@ -2253,14 +2256,18 @@ function animate() {
   for (const torch of torches) {
     const flicker = 0.8 + Math.sin(t * 9 + torch.phase) * 0.12 + Math.sin(t * 23 + torch.phase * 2) * 0.06;
     torch.flameMat.emissiveIntensity = (0.55 + nightFactor * 0.55) * flicker;
-    torch.light.intensity = nightFactor * 0.55 * flicker;
+    // Point lights use physically-correct inverse-square falloff in this
+    // Three.js version, so small numbers like the old 0.55 were nearly
+    // invisible past a few centimeters — this is the actual bug behind
+    // "the lamp doesn't do anything," not a missing feature.
+    torch.light.intensity = nightFactor * 9 * flicker;
   }
   for (const lamp of streetLamps) {
     // Steadier than an open torch flame — an oil lantern behind glass,
     // not a bare fire — and noticeably brighter/wider-reaching.
     const flicker = 0.92 + Math.sin(t * 3 + lamp.phase) * 0.06;
     lamp.flameMat.emissiveIntensity = (0.6 + nightFactor * 0.6) * flicker;
-    lamp.light.intensity = nightFactor * 1.1 * flicker;
+    lamp.light.intensity = nightFactor * 22 * flicker;
   }
   updateWater(t);
   updateBoats(t);
