@@ -300,6 +300,78 @@ function updateFish(t, dtSec) {
   }
 }
 
+// ---- shooting stars (night only) -----------------------------------------
+const shootingStars = [];
+function spawnShootingStar() {
+  const geo = new THREE.CylinderGeometry(0.006, 0.05, 1.4, 5);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xfff6d8, transparent: true, opacity: 0.9 });
+  const star = new THREE.Mesh(geo, mat);
+  const startX = -ISLAND_RADIUS * 3 + Math.random() * ISLAND_RADIUS * 2;
+  const startY = 22 + Math.random() * 8;
+  const startZ = (Math.random() - 0.5) * ISLAND_RADIUS * 6;
+  star.position.set(startX, startY, startZ);
+  const dir = new THREE.Vector3(1, -0.35 - Math.random() * 0.2, (Math.random() - 0.5) * 0.5).normalize();
+  star.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+  scene.add(star);
+  shootingStars.push({ mesh: star, born: performance.now(), life: 1100, dir });
+}
+
+function updateShootingStars(now, dtSec) {
+  for (let i = shootingStars.length - 1; i >= 0; i--) {
+    const s = shootingStars[i];
+    const age = now - s.born;
+    if (age > s.life) {
+      scene.remove(s.mesh);
+      shootingStars.splice(i, 1);
+      continue;
+    }
+    s.mesh.position.addScaledVector(s.dir, 42 * dtSec);
+    s.mesh.material.opacity = 0.9 * (1 - age / s.life);
+  }
+}
+
+// ---- world events: random ambient happenings for a living-world feel ----
+const FLAVOR_EVENTS_DAY = [
+  'A rooster crows somewhere near the workshop.',
+  'Villagers gather at the well to trade gossip.',
+  'The scent of fresh bread drifts from the tavern.',
+  'A cart creaks slowly along the dirt road.',
+  'Someone is sharpening tools near the forge.',
+  'Laughter echoes faintly across the fields.',
+  'A merchant\'s call rings out near the Keep.',
+];
+const FLAVOR_EVENTS_NIGHT = [
+  'An owl hoots from the treeline.',
+  'Torchlight flickers along the road to the Keep.',
+  'Someone hums a tune by the tavern hearth.',
+  'The night is quiet, save for crickets by the lake.',
+  'A lantern sways gently on the dock.',
+  'Distant footsteps fade into the dark.',
+];
+
+function triggerRandomWorldEvent() {
+  const roll = Math.random();
+  if (nightFactor > 0.5 && roll < 0.18) {
+    spawnShootingStar();
+    showToast('A shooting star streaks across the sky.');
+    return;
+  }
+  if (roll < 0.45) {
+    spawnVisitor();
+    showToast(nightFactor > 0.5 ? 'A weary traveler passes through the realm.' : 'A traveling merchant wanders into the realm.');
+    return;
+  }
+  const pool = nightFactor > 0.5 ? FLAVOR_EVENTS_NIGHT : FLAVOR_EVENTS_DAY;
+  showToast(pool[Math.floor(Math.random() * pool.length)]);
+}
+
+let nextWorldEventAt = 0;
+function maybeTriggerWorldEvent(now) {
+  if (now < nextWorldEventAt) return;
+  triggerRandomWorldEvent();
+  nextWorldEventAt = now + 18000 + Math.random() * 27000;
+}
+
 // ---- ambient ripple rings: a fish surfacing, a drip, a breeze ------------
 function spawnRipple(lake) {
   const geo = new THREE.RingGeometry(0.02, 0.036, 16);
@@ -1362,65 +1434,106 @@ function wanderObstacles() {
   return [...LAKES, ...dynamicHitboxes, ...staticHitboxes];
 }
 
+// ---- temporary visitors: a traveler passing through for a little while --
+const visitors = [];
+function spawnVisitor() {
+  const seed = Math.floor(Math.random() * 1e6);
+  const person = buildPerson(seed);
+  const start = pickWanderSpot();
+  person.position.copy(start);
+  wanderersGroup.add(person);
+  visitors.push({
+    person,
+    target: pickWanderSpot(),
+    speed: 0.28 + Math.random() * 0.2,
+    walkPhase: Math.random() * Math.PI * 2,
+    pauseUntil: 0,
+    expiresAt: performance.now() + 26000 + Math.random() * 16000,
+    fading: false,
+  });
+}
+
+function updateVisitors(t, dtSec, now) {
+  for (let i = visitors.length - 1; i >= 0; i--) {
+    const v = visitors[i];
+    if (!v.fading && now > v.expiresAt) v.fading = true;
+    if (v.fading) {
+      const s = v.person.scale.x - dtSec * 0.6;
+      if (s <= 0) {
+        wanderersGroup.remove(v.person);
+        visitors.splice(i, 1);
+        continue;
+      }
+      v.person.scale.setScalar(s);
+    }
+    advanceWalker(v, t, dtSec, now);
+  }
+}
+
+// Shared movement step for anything that wanders (permanent villagers and
+// temporary event visitors alike) — pause, steer around obstacles, walk,
+// animate. Pulled out of updateWanderers so visitors can reuse it exactly.
+function advanceWalker(entity, t, dtSec, now) {
+  const p = entity.person;
+  const { legL, legR, armL, armR } = p.userData;
+
+  if (now < entity.pauseUntil) {
+    legL.rotation.x = 0;
+    legR.rotation.x = 0;
+    armL.rotation.x = Math.sin(t * 1.2 + entity.walkPhase) * 0.05;
+    armR.rotation.x = -Math.sin(t * 1.2 + entity.walkPhase) * 0.05;
+    return;
+  }
+
+  let dx = entity.target.x - p.position.x;
+  let dz = entity.target.z - p.position.z;
+  const dist = Math.hypot(dx, dz);
+
+  if (dist < 0.1) {
+    entity.target = pickWanderSpot();
+    entity.pauseUntil = now + 1200 + Math.random() * 2800;
+    return;
+  }
+
+  // Steer away from every hit box (lakes + any building, present or
+  // future) whenever the walk would carry them through one — not just
+  // when picking a destination, since a straight line between two
+  // valid points can still cross an obstacle sitting in between.
+  dx /= dist;
+  dz /= dist;
+  for (const obstacle of wanderObstacles()) {
+    const ox = p.position.x - obstacle.x;
+    const oz = p.position.z - obstacle.z;
+    const odist = Math.hypot(ox, oz);
+    const margin = obstacle.radius + 0.35;
+    if (odist < margin) {
+      const push = (margin - odist) / margin;
+      dx += (ox / (odist || 1)) * push * 2.2;
+      dz += (oz / (odist || 1)) * push * 2.2;
+    }
+  }
+  const steerLen = Math.hypot(dx, dz) || 1;
+  dx /= steerLen;
+  dz /= steerLen;
+
+  const step = Math.min(dist, entity.speed * dtSec);
+  p.position.x += dx * step;
+  p.position.z += dz * step;
+  const surface = surfacePointAt(p.position.x, p.position.z);
+  if (surface) p.position.y = surface.y;
+  p.rotation.y = Math.atan2(dx, dz);
+
+  const swing = Math.sin(t * 6.5 + entity.walkPhase) * 0.5;
+  legL.rotation.x = swing;
+  legR.rotation.x = -swing;
+  armL.rotation.x = -swing * 0.75;
+  armR.rotation.x = swing * 0.75;
+  p.position.y += Math.abs(Math.sin(t * 6.5 + entity.walkPhase)) * 0.025;
+}
+
 function updateWanderers(t, dtSec) {
   const now = performance.now();
-  for (const w of wanderers) {
-    const p = w.person;
-    const { legL, legR, armL, armR } = p.userData;
-
-    if (now < w.pauseUntil) {
-      legL.rotation.x = 0;
-      legR.rotation.x = 0;
-      armL.rotation.x = Math.sin(t * 1.2 + w.walkPhase) * 0.05;
-      armR.rotation.x = -Math.sin(t * 1.2 + w.walkPhase) * 0.05;
-      continue;
-    }
-
-    let dx = w.target.x - p.position.x;
-    let dz = w.target.z - p.position.z;
-    const dist = Math.hypot(dx, dz);
-
-    if (dist < 0.1) {
-      w.target = pickWanderSpot();
-      w.pauseUntil = now + 1200 + Math.random() * 2800;
-      continue;
-    }
-
-    // Steer away from every hit box (lakes + any building, present or
-    // future) whenever the walk would carry them through one — not just
-    // when picking a destination, since a straight line between two
-    // valid points can still cross an obstacle sitting in between.
-    dx /= dist;
-    dz /= dist;
-    for (const obstacle of wanderObstacles()) {
-      const ox = p.position.x - obstacle.x;
-      const oz = p.position.z - obstacle.z;
-      const odist = Math.hypot(ox, oz);
-      const margin = obstacle.radius + 0.35;
-      if (odist < margin) {
-        const push = (margin - odist) / margin;
-        dx += (ox / (odist || 1)) * push * 2.2;
-        dz += (oz / (odist || 1)) * push * 2.2;
-      }
-    }
-    const steerLen = Math.hypot(dx, dz) || 1;
-    dx /= steerLen;
-    dz /= steerLen;
-
-    const step = Math.min(dist, w.speed * dtSec);
-    p.position.x += dx * step;
-    p.position.z += dz * step;
-    const surface = surfacePointAt(p.position.x, p.position.z);
-    if (surface) p.position.y = surface.y;
-    p.rotation.y = Math.atan2(dx, dz);
-
-    const swing = Math.sin(t * 6.5 + w.walkPhase) * 0.5;
-    legL.rotation.x = swing;
-    legR.rotation.x = -swing;
-    armL.rotation.x = -swing * 0.75;
-    armR.rotation.x = swing * 0.75;
-    p.position.y += Math.abs(Math.sin(t * 6.5 + w.walkPhase)) * 0.025;
-  }
+  for (const w of wanderers) advanceWalker(w, t, dtSec, now);
 }
 
 // ---- scene graph for projects -------------------------------------------
@@ -2071,6 +2184,9 @@ function animate() {
   maybeSpawnRipple(now);
   updateClouds(dtSec);
   updateSmoke(t);
+  updateVisitors(t, dtSec, now);
+  updateShootingStars(now, dtSec);
+  maybeTriggerWorldEvent(now);
 
   updateCameraTween();
   renderLabels();
