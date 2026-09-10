@@ -999,6 +999,56 @@ function registerTorch(torchGroup) {
   torches.push({ flameMat: torchGroup.userData.flame, light: torchGroup.userData.light, phase: Math.random() * Math.PI * 2 });
 }
 
+// ---- street lamp: a taller iron post with a bigger, steadier light ------
+// Same overall idea as buildTorch but scaled up with a proper lantern
+// cage — meant to actually light stretches of road, not just flicker
+// decoratively next to a doorway.
+let streetLamps = []; // { flameMat, light, phase } — let, not const: road lamps get swapped out on rebuild
+function buildStreetLamp() {
+  const group = new THREE.Group();
+  const ironMat = new THREE.MeshStandardMaterial({ color: 0x2b2620, roughness: 0.55, metalness: 0.5 });
+
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.04, 0.9, 6), ironMat);
+  post.position.y = 0.45;
+  group.add(post);
+
+  const bracket = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.16, 5), ironMat);
+  bracket.rotation.z = Math.PI / 2;
+  bracket.position.set(0.08, 0.86, 0);
+  group.add(bracket);
+
+  const cage = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.08, 0.18, 6, 1, true), ironMat.clone());
+  cage.material.side = THREE.DoubleSide;
+  cage.position.set(0.08, 1.0, 0);
+  group.add(cage);
+
+  const glassMat = new THREE.MeshStandardMaterial({
+    color: 0xffcf8a, emissive: 0xff9a3c, emissiveIntensity: 0.5, roughness: 0.4, transparent: true, opacity: 0.88,
+  });
+  const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.15, 6), glassMat);
+  glass.position.set(0.08, 1.0, 0);
+  group.add(glass);
+
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.095, 0.09, 6), ironMat);
+  cap.position.set(0.08, 1.13, 0);
+  group.add(cap);
+
+  const light = new THREE.PointLight(0xff9a3c, 0, 4.2);
+  light.position.set(0.08, 1.0, 0);
+  group.add(light);
+
+  group.userData.flame = glassMat;
+  group.userData.light = light;
+  group.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  return group;
+}
+
+function registerStreetLamp(lampGroup) {
+  const entry = { flameMat: lampGroup.userData.flame, light: lampGroup.userData.light, phase: Math.random() * Math.PI * 2 };
+  streetLamps.push(entry);
+  return entry;
+}
+
 // ---- unique dock per lake -------------------------------------------------
 function buildRowboat() {
   const group = new THREE.Group();
@@ -1380,15 +1430,42 @@ function buildRoadSegment(from, to) {
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo, roadMat);
   mesh.receiveShadow = true;
-  return mesh;
+  return { mesh, pts };
 }
 const roadMat = new THREE.MeshStandardMaterial({ color: 0x8a7355, roughness: 0.98 });
 
+let roadLampEntries = [];
 function buildRoads(spots) {
   roadGroup.clear();
+  // Road lamps get rebuilt from scratch each time (positions shift with
+  // the layout) — drop the previous batch's entries from the shared
+  // streetLamps update list first so old lights don't linger/duplicate.
+  streetLamps = streetLamps.filter((e) => !roadLampEntries.includes(e));
+  roadLampEntries = [];
+
   const hub = spots[0];
   for (let i = 1; i < spots.length; i++) {
-    roadGroup.add(buildRoadSegment(hub, spots[i]));
+    const { mesh, pts } = buildRoadSegment(hub, spots[i]);
+    roadGroup.add(mesh);
+
+    // A lamp roughly every ~2.2 units along the path, alternating sides,
+    // skipping the very ends so they don't crowd the buildings/Keep.
+    let dist = 0;
+    let side = 1;
+    for (let p = 1; p < pts.length - 1; p++) {
+      dist += pts[p - 1].distanceTo(pts[p]);
+      if (dist > 2.2) {
+        const dir = pts[Math.min(p + 1, pts.length - 1)].clone().sub(pts[p - 1]).normalize();
+        const perp = new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(0.22 * side);
+        const lamp = buildStreetLamp();
+        lamp.position.set(pts[p].x + perp.x, pts[p].y, pts[p].z + perp.z);
+        lamp.rotation.y = Math.random() * Math.PI * 2;
+        roadGroup.add(lamp);
+        roadLampEntries.push(registerStreetLamp(lamp));
+        dist = 0;
+        side *= -1;
+      }
+    }
   }
 }
 
@@ -1726,6 +1803,7 @@ function generateDecor() {
   scatterRandom(20, buildRock, 0.4);
   scatterRandom(24, buildFlowerPatch, 0.25);
   scatterRandom(10, () => buildTorch(), 0.6, (obj) => registerTorch(obj), 0.2);
+  scatterRandom(6, () => buildStreetLamp(), 1.4, (obj) => registerStreetLamp(obj), 0.3);
   decorGroup.add(buildGrassField(900));
 
   for (let li = 0; li < LAKES.length; li++) {
@@ -2176,6 +2254,13 @@ function animate() {
     const flicker = 0.8 + Math.sin(t * 9 + torch.phase) * 0.12 + Math.sin(t * 23 + torch.phase * 2) * 0.06;
     torch.flameMat.emissiveIntensity = (0.55 + nightFactor * 0.55) * flicker;
     torch.light.intensity = nightFactor * 0.55 * flicker;
+  }
+  for (const lamp of streetLamps) {
+    // Steadier than an open torch flame — an oil lantern behind glass,
+    // not a bare fire — and noticeably brighter/wider-reaching.
+    const flicker = 0.92 + Math.sin(t * 3 + lamp.phase) * 0.06;
+    lamp.flameMat.emissiveIntensity = (0.6 + nightFactor * 0.6) * flicker;
+    lamp.light.intensity = nightFactor * 1.1 * flicker;
   }
   updateWater(t);
   updateBoats(t);
