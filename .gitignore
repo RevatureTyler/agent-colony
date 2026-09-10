@@ -1,7 +1,3 @@
 node_modules/
 dist/
 *.log
-
-# Downloaded 3D model assets — license unconfirmed, kept local-only until
-# you confirm the source permits redistribution via this public repo.
-assets/models/

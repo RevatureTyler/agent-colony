@@ -30,6 +30,14 @@ Produces an installer in `dist/`.
 - Clicking a tile spawns a terminal window running `claude` in that project's directory.
 - A tile shows "session open" while that terminal process is alive.
 
+## Credits
+
+Two villager models in `assets/models/` were downloaded from Sketchfab and
+added under a license permitting redistribution:
+
+- `fantasy-villager.glb` — TODO: add creator name / source link
+- `woman-villager.glb` — TODO: add creator name / source link
+
 ## Roadmap ideas
 
 - Richer status (blocked / needs input) once Claude Code exposes session state
