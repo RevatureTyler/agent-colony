@@ -743,6 +743,14 @@ function buildTavern(seed) {
   win.position.set(0, 0.06 + 0.35, 0.451);
   group.add(win);
 
+  // entrance torches, opposite the barrel/sign side to avoid crowding
+  for (const side of [-1, 1]) {
+    const stake = buildTorch();
+    stake.position.set(side * 0.55, 0.06, -0.42);
+    group.add(stake);
+    registerTorch(stake);
+  }
+
   group.userData.windowMat = winMat;
   group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return group;
@@ -817,6 +825,44 @@ function buildWindmill(seed) {
 const windmills = [];
 const cozyBuildings = [];
 const lanterns = [];
+const torches = []; // { flameMat, light, phase } — flicker driven by nightFactor
+
+// ---- torch: a wall/ground stake with a flame + point light --------------
+// Reused for the pair flanking each building's entrance AND standalone
+// ones scattered around clearings, so there's exactly one implementation
+// to keep visually consistent.
+function buildTorch() {
+  const group = new THREE.Group();
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x4b3b2a, roughness: 0.85 });
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.028, 0.42, 6), poleMat);
+  pole.position.y = 0.21;
+  group.add(pole);
+
+  const bowlMat = new THREE.MeshStandardMaterial({ color: 0x2b2620, roughness: 0.6, metalness: 0.4 });
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.03, 0.05, 8), bowlMat);
+  bowl.position.y = 0.42;
+  group.add(bowl);
+
+  const flameMat = new THREE.MeshStandardMaterial({
+    color: 0xff9a3c, emissive: 0xff7a1c, emissiveIntensity: 0.6, roughness: 0.4,
+  });
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.08, 6), flameMat);
+  flame.position.y = 0.49;
+  group.add(flame);
+
+  const light = new THREE.PointLight(0xff9a3c, 0, 1.6);
+  light.position.y = 0.5;
+  group.add(light);
+
+  group.userData.flame = flameMat;
+  group.userData.light = light;
+  group.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  return group;
+}
+
+function registerTorch(torchGroup) {
+  torches.push({ flameMat: torchGroup.userData.flame, light: torchGroup.userData.light, phase: Math.random() * Math.PI * 2 });
+}
 
 // ---- unique dock per lake -------------------------------------------------
 function buildRowboat() {
@@ -1126,6 +1172,13 @@ function buildKeep() {
   group.add(flagPole);
   group.userData.flag = flagPole.userData.flagPivot;
 
+  for (const side of [-1, 1]) {
+    const stake = buildTorch();
+    stake.position.set(side * 0.5, base, 0.72);
+    group.add(stake);
+    registerTorch(stake);
+  }
+
   group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return group;
 }
@@ -1354,9 +1407,19 @@ function placeTile(key, index, totalGuess, isAddSlot, project) {
     person.position.set(0.5, 0.06, 0.3);
     group.add(person);
 
+    // Interior hearth glow (the window itself already carries an emissive
+    // material for the lit-window look) — a separate concern from the
+    // exterior entrance torches below, not a duplicate of them.
     const torch = new THREE.PointLight(0xff9a3c, 0, 2.2);
     torch.position.set(0, (building.userData.height || 1) * 0.4, 0.3);
     group.add(torch);
+
+    for (const side of [-1, 1]) {
+      const stake = buildTorch();
+      stake.position.set(side * 0.34, 0.06, 0.42);
+      group.add(stake);
+      registerTorch(stake);
+    }
 
     hitMesh = building.children[0];
     tiles.set(key, { group, building, person, torch, walkPhase: Math.random() * Math.PI * 2, hitMesh, project });
@@ -1474,6 +1537,7 @@ function generateDecor() {
   scatterRandom(34, buildBush, 0.3);
   scatterRandom(20, buildRock, 0.4);
   scatterRandom(24, buildFlowerPatch, 0.25);
+  scatterRandom(10, () => buildTorch(), 0.6, (obj) => registerTorch(obj), 0.2);
 
   for (let li = 0; li < LAKES.length; li++) {
     const lake = LAKES[li];
@@ -1832,6 +1896,11 @@ function animate() {
   }
   for (const lantern of lanterns) {
     lantern.emissiveIntensity = 0.2 + nightFactor * (0.7 + Math.sin(t * 4) * 0.15);
+  }
+  for (const torch of torches) {
+    const flicker = 0.8 + Math.sin(t * 9 + torch.phase) * 0.12 + Math.sin(t * 23 + torch.phase * 2) * 0.06;
+    torch.flameMat.emissiveIntensity = (0.55 + nightFactor * 0.55) * flicker;
+    torch.light.intensity = nightFactor * 0.55 * flicker;
   }
   updateWater(t);
   updateBoats(t);
