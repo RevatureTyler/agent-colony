@@ -3,6 +3,7 @@ import { OrbitControls } from '../node_modules/three/examples/jsm/controls/Orbit
 import { EffectComposer } from '../node_modules/three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from '../node_modules/three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from '../node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { GLTFLoader } from '../node_modules/three/examples/jsm/loaders/GLTFLoader.js';
 
 window.addEventListener('error', (e) => console.error('[scene]', e.message, e.filename, e.lineno));
 window.addEventListener('unhandledrejection', (e) => console.error('[scene]', e.reason));
@@ -1548,6 +1549,76 @@ function spawnWanderers(count) {
   }
 }
 
+// ---- imported GLB villager models -----------------------------------
+// Neither source model has a skeleton/animation (checked their glTF JSON:
+// animations: [], skins: 0) — they're a single static-pose mesh each, so
+// these wanderers glide/bob rather than walk-cycle. They still get full
+// obstacle steering by reusing the exact same wanderers array/advanceWalker
+// path as the procedural villagers; dummy Object3Ds stand in for the
+// limb joints advanceWalker expects to rotate, and it's a harmless no-op
+// since nothing renders them.
+function normalizeAndWrapModel(model, targetHeight) {
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const scale = targetHeight / (size.y || 1);
+  model.scale.setScalar(scale);
+  const box2 = new THREE.Box3().setFromObject(model);
+  model.position.y = -box2.min.y;
+
+  const wrapper = new THREE.Group();
+  wrapper.add(model);
+  wrapper.userData = {
+    legL: new THREE.Object3D(),
+    legR: new THREE.Object3D(),
+    armL: new THREE.Object3D(),
+    armR: new THREE.Object3D(),
+  };
+  return wrapper;
+}
+
+function loadVillagerModels() {
+  const loader = new GLTFLoader();
+  const files = ['../assets/models/fantasy-villager.glb', '../assets/models/woman-villager.glb'];
+  return Promise.all(
+    files.map(
+      (f) =>
+        new Promise((resolve) => {
+          loader.load(
+            f,
+            (gltf) => resolve(gltf.scene),
+            undefined,
+            (err) => {
+              console.error('[scene] failed to load model', f, err);
+              resolve(null);
+            }
+          );
+        })
+    )
+  ).then((models) => models.filter(Boolean));
+}
+
+function spawnModelWanderer(sourceModel) {
+  const model = sourceModel.clone(true);
+  model.traverse((o) => {
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+    }
+  });
+  const wrapper = normalizeAndWrapModel(model, 0.6 + Math.random() * 0.08);
+  const start = pickWanderSpot();
+  wrapper.position.copy(start);
+  wanderersGroup.add(wrapper);
+  wanderers.push({
+    person: wrapper,
+    target: pickWanderSpot(),
+    speed: 0.18 + Math.random() * 0.12,
+    walkPhase: Math.random() * Math.PI * 2,
+    pauseUntil: 0,
+  });
+}
+
 function wanderObstacles() {
   return [...LAKES, ...dynamicHitboxes, ...staticHitboxes];
 }
@@ -2356,5 +2427,11 @@ applyDayCycle();
 refreshProjects().then(() => {
   generateDecor();
   spawnWanderers(8);
+  loadVillagerModels().then((models) => {
+    for (const model of models) {
+      spawnModelWanderer(model);
+      spawnModelWanderer(model);
+    }
+  });
   animate();
 });
