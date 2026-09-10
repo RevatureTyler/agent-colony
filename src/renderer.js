@@ -1566,6 +1566,8 @@ function normalizeAndWrapModel(model, targetHeight) {
   const box2 = new THREE.Box3().setFromObject(model);
   model.position.y = -box2.min.y;
 
+  model.userData.baseScale = scale;
+
   const wrapper = new THREE.Group();
   wrapper.add(model);
   wrapper.userData = {
@@ -1573,6 +1575,7 @@ function normalizeAndWrapModel(model, targetHeight) {
     legR: new THREE.Object3D(),
     armL: new THREE.Object3D(),
     armR: new THREE.Object3D(),
+    modelRoot: model,
   };
   return wrapper;
 }
@@ -1664,13 +1667,20 @@ function updateVisitors(t, dtSec, now) {
 // animate. Pulled out of updateWanderers so visitors can reuse it exactly.
 function advanceWalker(entity, t, dtSec, now) {
   const p = entity.person;
-  const { legL, legR, armL, armR } = p.userData;
+  const { legL, legR, armL, armR, modelRoot } = p.userData;
 
   if (now < entity.pauseUntil) {
     legL.rotation.x = 0;
     legR.rotation.x = 0;
     armL.rotation.x = Math.sin(t * 1.2 + entity.walkPhase) * 0.05;
     armR.rotation.x = -Math.sin(t * 1.2 + entity.walkPhase) * 0.05;
+    if (modelRoot) {
+      // Idle "breathing" sway, distinct from the walk wobble below.
+      modelRoot.rotation.z = Math.sin(t * 1.2 + entity.walkPhase) * 0.02;
+      modelRoot.rotation.x = 0;
+      const s = modelRoot.userData.baseScale;
+      modelRoot.scale.set(s, s, s);
+    }
     return;
   }
 
@@ -1718,6 +1728,19 @@ function advanceWalker(entity, t, dtSec, now) {
   armL.rotation.x = -swing * 0.75;
   armR.rotation.x = swing * 0.75;
   p.position.y += Math.abs(Math.sin(t * 6.5 + entity.walkPhase)) * 0.025;
+
+  if (modelRoot) {
+    // No skeleton to actually swing legs, so approximate a walk with a
+    // whole-body waddle: side-to-side roll on each "footfall", a slight
+    // forward lean, and a squash/stretch bounce — applied to the model's
+    // own local rotation/scale so it doesn't fight the wrapper's heading.
+    const stepPhase = t * 6.5 + entity.walkPhase;
+    modelRoot.rotation.z = Math.sin(stepPhase) * 0.11;
+    modelRoot.rotation.x = 0.08 + Math.cos(stepPhase * 2) * 0.025;
+    const s = modelRoot.userData.baseScale;
+    const bounce = Math.abs(Math.sin(stepPhase)) * 0.06;
+    modelRoot.scale.set(s * (1 - bounce * 0.5), s * (1 + bounce), s * (1 - bounce * 0.5));
+  }
 }
 
 function updateWanderers(t, dtSec) {
