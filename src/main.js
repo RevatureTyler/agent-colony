@@ -92,11 +92,15 @@ ipcMain.handle('agent:launch', (_evt, projectPath) => {
 
   let child;
   if (isWindows) {
-    // Opens a new console window running `claude` in the project directory.
-    // projectPath is passed as its own argv entry (via /D) rather than
-    // interpolated into a shell command string, so it can't break out
-    // even if it contains quotes or shell metacharacters.
-    child = spawn('cmd.exe', ['/c', 'start', '""', '/D', projectPath, 'cmd.exe', '/k', 'claude'], {
+    // Spawn cmd.exe directly (no `start` wrapper) so the process we track
+    // IS the terminal session itself. `start` launches a new window and
+    // then exits immediately — with that approach the tracked child died
+    // within milliseconds of launch (its whole job is to fire-and-forget),
+    // so "active" flipped back to false almost instantly even though the
+    // real claude session kept running, which is why villagers/lights
+    // never showed activity. projectPath goes in via `cwd`, not argv, so
+    // there's nothing to interpolate/escape.
+    child = spawn('cmd.exe', ['/k', 'claude'], {
       cwd: projectPath,
       detached: true,
       shell: false,
