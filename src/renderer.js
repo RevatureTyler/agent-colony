@@ -31,6 +31,7 @@ const apStatus = document.getElementById('apStatus');
 const apLaunch = document.getElementById('apLaunch');
 const apRemove = document.getElementById('apRemove');
 const apCancel = document.getElementById('apCancel');
+const addBtn = document.getElementById('addBtn');
 
 const ISLAND_RADIUS = 9;
 const LAKES = [
@@ -1979,6 +1980,7 @@ async function refreshProjects() {
   renderSidebar();
 }
 window.agentColony.onStatus(refreshProjects);
+addBtn.addEventListener('click', () => window.agentColony.addProject().then(refreshProjects));
 
 // ---- animation loop -----------------------------------------------------
 const clock = new THREE.Clock();
