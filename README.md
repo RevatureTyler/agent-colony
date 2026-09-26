@@ -4,6 +4,10 @@ A tiny desktop dashboard for your Claude Code projects. Register project folders
 see them as tiles on a hex grid, and click one to drop straight into a `claude`
 session in that directory.
 
+> **Superseded by [Emberhold](https://github.com/RevatureTyler/emberhold)**, a fantasy-themed
+> fork of the MIT-licensed Bot Crossing that reads your real agent threads automatically. Agent
+> Colony stays here as the original prototype.
+
 ## Requirements
 
 - [Node.js](https://nodejs.org/) 18+
